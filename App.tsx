@@ -1207,6 +1207,14 @@ const SurnameManager = ({
     const [showFormModal, setShowFormModal] = useState(false);
     const [editingData, setEditingData] = useState<SurnameData | undefined>(undefined);
     const [newHallName, setNewHallName] = useState("");
+    const [searchTerm, setSearchTerm] = useState("");
+
+    const filteredSurnames = useMemo(() => {
+        return surnames.filter(s => 
+            s.character.includes(searchTerm) || 
+            s.pinyin.toLowerCase().includes(searchTerm.toLowerCase())
+        );
+    }, [surnames, searchTerm]);
 
     const handleOpenCreate = () => {
         setEditingData(undefined);
@@ -1258,17 +1266,43 @@ const SurnameManager = ({
 
             <div className="flex flex-1 overflow-hidden">
                 {/* Sidebar List */}
-                <div className="w-1/4 border-r border-stone-300 overflow-y-auto bg-white">
-                    {surnames.map(s => (
-                        <div 
-                            key={s.character} 
-                            onClick={() => setSelectedSurname(s)}
-                            className={`p-4 border-b cursor-pointer flex justify-between items-center hover:bg-stone-50 ${selectedSurname?.character === s.character ? 'bg-stone-100 border-l-4 border-l-[#8b0000]' : ''}`}
-                        >
-                            <span className="font-bold text-lg">{s.character}</span>
-                            <span className="text-xs text-stone-400">{s.halls.length}个堂号</span>
+                <div className="w-1/4 border-r border-stone-300 bg-white flex flex-col">
+                    {/* Search Box */}
+                    <div className="p-4 border-b bg-stone-50">
+                        <div className="relative">
+                             <Search className="absolute left-3 top-2.5 w-4 h-4 text-stone-400" />
+                             <input 
+                                 className="w-full pl-9 pr-8 py-2 border rounded-sm text-sm focus:outline-none focus:ring-1 focus:ring-[#8b0000] placeholder-stone-400" 
+                                 placeholder="搜索姓氏或拼音..."
+                                 value={searchTerm}
+                                 onChange={e => setSearchTerm(e.target.value)}
+                             />
+                             {searchTerm && (
+                                 <button onClick={() => setSearchTerm("")} className="absolute right-2 top-2.5 text-stone-400 hover:text-stone-600">
+                                     <X className="w-4 h-4" />
+                                 </button>
+                             )}
                         </div>
-                    ))}
+                    </div>
+                    
+                    {/* List */}
+                    <div className="overflow-y-auto flex-1">
+                        {filteredSurnames.map(s => (
+                            <div 
+                                key={s.character} 
+                                onClick={() => setSelectedSurname(s)}
+                                className={`p-4 border-b cursor-pointer flex justify-between items-center hover:bg-stone-50 transition-colors ${selectedSurname?.character === s.character ? 'bg-stone-100 border-l-4 border-l-[#8b0000]' : ''}`}
+                            >
+                                <span className="font-bold text-lg">{s.character}</span>
+                                <span className="text-xs text-stone-400">{s.halls.length}个堂号</span>
+                            </div>
+                        ))}
+                        {filteredSurnames.length === 0 && (
+                            <div className="p-8 text-center text-stone-400 text-sm">
+                                未找到匹配姓氏
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 {/* Detail View */}
