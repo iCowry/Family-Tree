@@ -43,7 +43,9 @@ import {
   Table,
   List,
   Link as LinkIcon,
-  History as HistoryIcon
+  History as HistoryIcon,
+  PlusCircle,
+  MoreHorizontal
 } from 'lucide-react';
 import { CLAN_INFO, MOCK_MEMBERS, EVENTS, MOCK_SURNAMES } from './constants';
 import { Person, Gender, SurnameData, HallData, Family, Region, ClanInfo, LifeEvent, Location } from './types';
@@ -1324,6 +1326,195 @@ const FamilyApp = ({ family, allFamilies, onExit, onUpdateFamily }: { family: Fa
     );
 };
 
+// --- New Components for Landing Page Logic ---
+
+// Modal for selecting a specific family branch of a surname
+const ClanSelectionModal = ({ surname, existingFamilies, onClose, onSelectFamily, onCreateFamily, onDeleteFamily, onEditFamily }: { 
+    surname: SurnameData, 
+    existingFamilies: Family[], 
+    onClose: () => void, 
+    onSelectFamily: (id: string) => void,
+    onCreateFamily: () => void,
+    onDeleteFamily: (id: string) => void,
+    onEditFamily: (family: Family) => void
+}) => {
+    return (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+            <div className="bg-[#f4f1ea] rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
+                <div className="relative h-32 bg-[#2c2c2c] flex items-center justify-center overflow-hidden shrink-0">
+                    <div className="absolute inset-0 opacity-20 bg-[url('https://www.transparenttextures.com/patterns/chinese-pattern.png')]"></div>
+                    <button onClick={onClose} className="absolute top-4 right-4 text-white/50 hover:text-white"><X className="w-6 h-6"/></button>
+                    <div className="flex flex-col items-center z-10">
+                        <div className="w-16 h-16 bg-[#8b0000] rounded-sm flex items-center justify-center shadow-lg border-2 border-[#dcd9cd] mb-2">
+                             <span className="font-calligraphy text-4xl text-[#f4f1ea]">{surname.character}</span>
+                        </div>
+                        <h2 className="text-white font-serif text-xl tracking-widest">{surname.character}氏家族分支</h2>
+                    </div>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                     <div className="flex justify-between items-center mb-2">
+                         <h3 className="text-sm font-bold text-[#5d4037] uppercase opacity-70">已建族谱 ({existingFamilies.length})</h3>
+                         <button onClick={onCreateFamily} className="text-[#8b0000] text-sm font-bold flex items-center gap-1 hover:underline">
+                             <PlusCircle className="w-4 h-4"/> 新建分支 (Create Branch)
+                         </button>
+                     </div>
+
+                     {existingFamilies.length === 0 ? (
+                         <div className="text-center py-12 border-2 border-dashed border-stone-300 rounded-lg bg-stone-50/50">
+                             <p className="text-stone-400 mb-4">该姓氏暂无已建立的数字化族谱。</p>
+                             <button 
+                                onClick={onCreateFamily}
+                                className="bg-[#5d4037] text-white px-6 py-2 rounded-full shadow hover:bg-[#4a332a] transition-all"
+                             >
+                                 创建第一个{surname.character}氏族谱
+                             </button>
+                         </div>
+                     ) : (
+                         <div className="grid grid-cols-1 gap-4">
+                             {existingFamilies.map(f => (
+                                 <div key={f.id} className="bg-white border border-[#dcd9cd] p-4 rounded-lg shadow-sm hover:shadow-md transition-shadow flex justify-between items-center group">
+                                     <div className="flex-1 cursor-pointer" onClick={() => onSelectFamily(f.id)}>
+                                         <div className="flex items-center gap-2 mb-1">
+                                             <span className="font-bold text-lg text-[#2c2c2c]">{f.info.hallName || "未命名堂号"}</span>
+                                             <span className="bg-stone-100 text-stone-500 text-xs px-2 py-0.5 rounded-full">{f.members.length} 人</span>
+                                         </div>
+                                         <div className="text-xs text-stone-500 flex gap-4">
+                                             <span className="flex items-center gap-1"><MapPin className="w-3 h-3"/> {f.info.origin}</span>
+                                             <span className="flex items-center gap-1"><User className="w-3 h-3"/> 始祖: {f.info.ancestor}</span>
+                                         </div>
+                                     </div>
+                                     <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                         <button 
+                                            onClick={() => onEditFamily(f)}
+                                            className="p-2 text-stone-400 hover:text-[#5d4037] hover:bg-stone-100 rounded-full"
+                                            title="编辑基本信息"
+                                         >
+                                             <Settings className="w-4 h-4"/>
+                                         </button>
+                                         <button 
+                                            onClick={() => onDeleteFamily(f.id)}
+                                            className="p-2 text-stone-400 hover:text-red-600 hover:bg-stone-100 rounded-full"
+                                            title="删除族谱"
+                                         >
+                                             <Trash2 className="w-4 h-4"/>
+                                         </button>
+                                         <button 
+                                            onClick={() => onSelectFamily(f.id)}
+                                            className="ml-2 px-4 py-1.5 bg-[#8b0000] text-white text-sm rounded shadow-sm hover:bg-[#a00000]"
+                                         >
+                                             进入
+                                         </button>
+                                     </div>
+                                 </div>
+                             ))}
+                         </div>
+                     )}
+                     
+                     {/* Informational Section about the Surname */}
+                     <div className="mt-8 pt-6 border-t border-stone-200">
+                         <h3 className="text-sm font-bold text-[#5d4037] uppercase opacity-70 mb-4">关于{surname.character}姓</h3>
+                         <div className="bg-white p-4 rounded border border-stone-200 text-sm text-stone-600 space-y-2">
+                             <p><span className="font-bold">起源：</span>{surname.origin}</p>
+                             <p><span className="font-bold">分布：</span>{surname.distribution}</p>
+                             {surname.famousAncestors && (
+                                 <p><span className="font-bold">历史名人：</span>{surname.famousAncestors.join("、")}</p>
+                             )}
+                         </div>
+                     </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// Modal for editing Clan Info
+const FamilyEditModal = ({ initialInfo, surname, onClose, onSave }: { initialInfo?: ClanInfo, surname: string, onClose: () => void, onSave: (info: ClanInfo) => void }) => {
+    const [info, setInfo] = useState<ClanInfo>(initialInfo || {
+        surname: surname,
+        hallName: "",
+        origin: "",
+        ancestor: "",
+        motto: "",
+        generationPoem: ""
+    });
+
+    return (
+        <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in zoom-in-95">
+             <div className="bg-white rounded-lg shadow-xl w-full max-w-lg overflow-hidden">
+                 <div className="p-4 border-b border-stone-200 bg-stone-50 flex justify-between items-center">
+                     <h3 className="font-bold text-[#5d4037]">
+                         {initialInfo ? "编辑族谱信息" : "创建新家族分支"}
+                     </h3>
+                     <button onClick={onClose}><X className="w-5 h-5 text-stone-400"/></button>
+                 </div>
+                 <div className="p-6 space-y-4">
+                     <div>
+                         <label className="block text-xs font-bold text-stone-500 uppercase mb-1">堂号 (Hall Name)</label>
+                         <input 
+                            type="text" 
+                            className="w-full border p-2 rounded focus:border-[#8b0000] focus:outline-none"
+                            placeholder="如：陇西堂"
+                            value={info.hallName}
+                            onChange={e => setInfo({...info, hallName: e.target.value})}
+                         />
+                     </div>
+                     <div>
+                         <label className="block text-xs font-bold text-stone-500 uppercase mb-1">发源地 (Origin)</label>
+                         <input 
+                            type="text" 
+                            className="w-full border p-2 rounded focus:border-[#8b0000] focus:outline-none"
+                            placeholder="如：甘肃陇西"
+                            value={info.origin}
+                            onChange={e => setInfo({...info, origin: e.target.value})}
+                         />
+                     </div>
+                     <div>
+                         <label className="block text-xs font-bold text-stone-500 uppercase mb-1">始祖 (First Ancestor)</label>
+                         <input 
+                            type="text" 
+                            className="w-full border p-2 rounded focus:border-[#8b0000] focus:outline-none"
+                            placeholder="如：李利贞"
+                            value={info.ancestor}
+                            onChange={e => setInfo({...info, ancestor: e.target.value})}
+                         />
+                     </div>
+                     <div>
+                         <label className="block text-xs font-bold text-stone-500 uppercase mb-1">族训 (Motto)</label>
+                         <textarea 
+                            className="w-full border p-2 rounded focus:border-[#8b0000] focus:outline-none h-20"
+                            placeholder="家族传承的训诫..."
+                            value={info.motto}
+                            onChange={e => setInfo({...info, motto: e.target.value})}
+                         />
+                     </div>
+                     <div>
+                         <label className="block text-xs font-bold text-stone-500 uppercase mb-1">字辈诗 (Generation Poem)</label>
+                         <textarea 
+                            className="w-full border p-2 rounded focus:border-[#8b0000] focus:outline-none h-20"
+                            placeholder="用于排辈分的诗句..."
+                            value={info.generationPoem}
+                            onChange={e => setInfo({...info, generationPoem: e.target.value})}
+                         />
+                     </div>
+                 </div>
+                 <div className="p-4 border-t border-stone-200 bg-stone-50 flex justify-end gap-3">
+                     <button onClick={onClose} className="px-4 py-2 text-stone-600 hover:bg-stone-200 rounded">取消</button>
+                     <button 
+                        onClick={() => {
+                            if(!info.hallName) return alert("请输入堂号");
+                            onSave(info);
+                        }} 
+                        className="px-6 py-2 bg-[#8b0000] text-white rounded hover:bg-[#a00000] shadow-sm"
+                     >
+                         保存
+                     </button>
+                 </div>
+             </div>
+        </div>
+    );
+};
+
 const App = () => {
     const [families, setFamilies] = useState<Family[]>(() => {
         // Initialize mock data
@@ -1338,35 +1529,44 @@ const App = () => {
     });
     
     const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
+    const [viewingSurname, setViewingSurname] = useState<SurnameData | null>(null); // For ClanSelectionModal
+    const [isEditingClan, setIsEditingClan] = useState<{ isOpen: boolean, familyId?: string, surname?: string }>({ isOpen: false });
     const [searchTerm, setSearchTerm] = useState("");
 
-    const handleSelectSurname = (surnameData: SurnameData) => {
-        const existing = families.find(f => f.info.surname === surnameData.character);
-        if (existing) {
-            setSelectedFamilyId(existing.id);
+    const handleSelectSurnameCard = (surnameData: SurnameData) => {
+        setViewingSurname(surnameData);
+    };
+
+    const handleCreateFamily = (info: ClanInfo) => {
+        const newFamily: Family = {
+            id: Date.now().toString(),
+            info: info,
+            members: [],
+            events: [],
+            createdAt: Date.now()
+        };
+        setFamilies(prev => [...prev, newFamily]);
+        setIsEditingClan({ isOpen: false });
+    };
+
+    const handleUpdateClanInfo = (info: ClanInfo) => {
+        if (isEditingClan.familyId) {
+            setFamilies(prev => prev.map(f => f.id === isEditingClan.familyId ? { ...f, info } : f));
+            setIsEditingClan({ isOpen: false });
         } else {
-            const newFamily: Family = {
-                id: Date.now().toString(),
-                info: {
-                    surname: surnameData.character,
-                    hallName: surnameData.halls[0]?.name || "未定堂号",
-                    origin: surnameData.origin,
-                    ancestor: "始祖",
-                    motto: "暂无族训",
-                    generationPoem: "暂无字辈"
-                },
-                members: [],
-                events: [],
-                createdAt: Date.now()
-            };
-            setFamilies(prev => [...prev, newFamily]);
-            setSelectedFamilyId(newFamily.id);
+            handleCreateFamily(info);
+        }
+    };
+
+    const handleDeleteFamily = (id: string) => {
+        if(confirm("确定要删除该家族族谱吗？所有成员数据将被永久删除。")) {
+            setFamilies(prev => prev.filter(f => f.id !== id));
         }
     };
 
     const currentFamily = families.find(f => f.id === selectedFamilyId);
 
-    const handleUpdateFamily = (updated: Family) => {
+    const handleUpdateFamilyMembers = (updated: Family) => {
         setFamilies(prev => prev.map(f => f.id === updated.id ? updated : f));
     };
 
@@ -1376,7 +1576,7 @@ const App = () => {
                 family={currentFamily} 
                 allFamilies={families} 
                 onExit={() => setSelectedFamilyId(null)}
-                onUpdateFamily={handleUpdateFamily}
+                onUpdateFamily={handleUpdateFamilyMembers}
             />
         );
     }
@@ -1412,14 +1612,20 @@ const App = () => {
       
                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-6">
                      {displayedSurnames.map(s => {
-                         const hasData = families.some(f => f.info.surname === s.character);
+                         // Check how many existing families correspond to this surname
+                         const branchCount = families.filter(f => f.info.surname === s.character).length;
+                         
                          return (
                              <button 
                                   key={s.character}
-                                  onClick={() => handleSelectSurname(s)}
+                                  onClick={() => handleSelectSurnameCard(s)}
                                   className="bg-white rounded-lg shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 overflow-hidden border border-[#dcd9cd] group text-left relative"
                              >
-                                  {hasData && <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-green-500 ring-2 ring-white"></div>}
+                                  {branchCount > 0 && (
+                                      <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded-md bg-[#5d4037] text-white text-[10px] ring-2 ring-white z-10">
+                                          {branchCount} 支
+                                      </div>
+                                  )}
                                   <div className="h-24 bg-[#f4f1ea] flex items-center justify-center group-hover:bg-[#8b0000] transition-colors duration-300">
                                       <span className="font-calligraphy text-5xl text-[#5d4037] group-hover:text-white transition-colors duration-300">{s.character}</span>
                                   </div>
@@ -1445,6 +1651,35 @@ const App = () => {
             <footer className="bg-[#2c2c2c] text-stone-500 py-8 text-center text-sm">
                 <p>&copy; 2024 Chinese Genealogy System. Preserving Heritage.</p>
             </footer>
+
+            {/* --- MODALS --- */}
+            
+            {/* 1. Clan Selection Modal (List of families for a surname) */}
+            {viewingSurname && (
+                <ClanSelectionModal 
+                    surname={viewingSurname}
+                    existingFamilies={families.filter(f => f.info.surname === viewingSurname.character)}
+                    onClose={() => setViewingSurname(null)}
+                    onSelectFamily={(id) => {
+                        setSelectedFamilyId(id);
+                        setViewingSurname(null);
+                    }}
+                    onCreateFamily={() => setIsEditingClan({ isOpen: true, surname: viewingSurname.character })}
+                    onDeleteFamily={handleDeleteFamily}
+                    onEditFamily={(f) => setIsEditingClan({ isOpen: true, familyId: f.id, surname: f.info.surname })}
+                />
+            )}
+
+            {/* 2. Clan Info Edit Modal */}
+            {isEditingClan.isOpen && (
+                <FamilyEditModal 
+                    surname={isEditingClan.surname || ""}
+                    initialInfo={isEditingClan.familyId ? families.find(f => f.id === isEditingClan.familyId)?.info : undefined}
+                    onClose={() => setIsEditingClan({ isOpen: false })}
+                    onSave={handleUpdateClanInfo}
+                />
+            )}
+
         </div>
     );
 };
