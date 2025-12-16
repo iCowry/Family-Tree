@@ -17,20 +17,22 @@ export const analyzeRelationship = async (personA: Person, personB: Person, allM
   }
 
   const prompt = `
-    Context: A Chinese Genealogy system.
-    Task: Analyze the relationship between two family members: ${personA.surname}${personA.givenName} and ${personB.surname}${personB.givenName}.
+    Context: A Chinese Genealogy system (中华族谱).
+    Task: Analyze the relationship between ${personA.surname}${personA.givenName} (${personA.generation}世) and ${personB.surname}${personB.givenName} (${personB.generation}世).
     
     Data:
     Person A: ${JSON.stringify(personA)}
     Person B: ${JSON.stringify(personB)}
-    Relevant Ancestors (Subset): ${JSON.stringify(allMembers.filter(m => m.generation < Math.max(personA.generation, personB.generation)))}
+    Relevant Ancestors: ${JSON.stringify(allMembers.filter(m => m.generation < Math.max(personA.generation, personB.generation)))}
 
-    Please provide:
-    1. The specific relationship title in Chinese (e.g., 堂兄, 从叔).
-    2. A brief calculation explanation (e.g., "Person A is the son of X, who is the brother of Person B's father...").
-    3. The "Wu Fu" (Five Degrees of Mourning) status if applicable.
+    Requirements:
+    1. Determine the exact relationship title (e.g., 堂兄, 族叔, 从孙).
+    2. Determine the generation distance (e.g., "三代内", "五代内").
+    3. Determine "Wu Fu" (Five Degrees of Mourning) status (e.g., "五服以内", "五服之外").
+    4. Provide a very brief logic explanation.
     
-    Output Format: JSON with keys: "title", "explanation", "wufu".
+    Output Format: JSON with keys: "title" (string), "generation_distance" (string), "wufu" (string), "explanation" (string).
+    Example Output: { "title": "堂兄", "generation_distance": "三代内", "wufu": "五服以内", "explanation": "同祖父，不同父亲，且A比B年长。" }
   `;
 
   try {

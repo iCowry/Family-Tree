@@ -17,7 +17,8 @@ export interface Location {
 
 export interface Region {
   id: string;
-  name: string; // e.g. "陇西", "太原"
+  name: string; // e.g. "陇西", "太原" (Modern Name or General Name)
+  historicalName?: string; // e.g. "郡望", "古称"
   province: string;
   description?: string;
 }
@@ -42,6 +43,7 @@ export interface Person {
   deathYear?: number;
   fatherId?: string;
   motherId?: string; // ID
+  motherName?: string; // Name of mother (if ID not available)
   spouses: string[]; // Names or IDs
   children: string[]; // IDs
   portrait?: string;

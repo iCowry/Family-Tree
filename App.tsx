@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { GoogleGenAI } from "@google/genai";
 import { 
   Users, 
   GitGraph, 
@@ -28,10 +29,24 @@ import {
   Calendar,
   UserPlus,
   Heart,
-  Check
+  Check,
+  Layout,
+  LayoutList,
+  Maximize,
+  Minimize,
+  ArrowLeft,
+  Eye,
+  EyeOff,
+  Filter,
+  ChevronDown,
+  AlertTriangle,
+  Table,
+  List,
+  Link as LinkIcon,
+  History as HistoryIcon
 } from 'lucide-react';
 import { CLAN_INFO, MOCK_MEMBERS, EVENTS, MOCK_SURNAMES } from './constants';
-import { Person, Gender, SurnameData, HallData, Family, Region, ClanInfo, LifeEvent } from './types';
+import { Person, Gender, SurnameData, HallData, Family, Region, ClanInfo, LifeEvent, Location } from './types';
 import { analyzeRelationship, generateBiography } from './services/geminiService';
 
 // --- Shared UI Components ---
@@ -50,8 +65,8 @@ const SectionTitle = ({ title, sub }: { title: string; sub?: string }) => (
   </div>
 );
 
-const Card = ({ children, className = "" }: { children?: React.ReactNode; className?: string }) => (
-  <div className={`bg-white/60 backdrop-blur-sm border border-[#dcd9cd] shadow-sm p-6 relative overflow-hidden ${className}`}>
+const Card: React.FC<{ children?: React.ReactNode; className?: string; onClick?: () => void }> = ({ children, className = "", onClick }) => (
+  <div onClick={onClick} className={`bg-white/60 backdrop-blur-sm border border-[#dcd9cd] shadow-sm p-6 relative overflow-hidden ${className}`}>
     <div className="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-[#5d4037]/20 rounded-tr-lg"></div>
     <div className="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-[#5d4037]/20 rounded-bl-lg"></div>
     {children}
@@ -60,34 +75,497 @@ const Card = ({ children, className = "" }: { children?: React.ReactNode; classN
 
 // --- Sub-Components ---
 
-// Tree Visualization
-const TreeNode: React.FC<{ memberId: string, allMembers: Person[], onSelect: (m: Person) => void }> = ({ memberId, allMembers, onSelect }) => {
-    const member = allMembers.find(m => m.id === memberId);
-    if (!member) return null;
+const WuFuNode: React.FC<{ role: string, person?: Person, highlight?: boolean }> = ({ role, person, highlight = false }) => (
+    <div className={`flex flex-col items-center relative ${!person ? 'opacity-30' : ''}`}>
+        <div className={`
+            w-16 h-16 rounded-full flex items-center justify-center border-2 shadow-sm relative z-10
+            ${highlight ? 'bg-[#8b0000] text-white border-[#8b0000] scale-110' : 'bg-white text-[#2c2c2c] border-[#5d4037]'}
+        `}>
+            {person ? (
+                <span className="font-calligraphy text-xl">{person.givenName}</span>
+            ) : (
+                <span className="text-xs text-stone-400">未知</span>
+            )}
+            {highlight && <div className="absolute -inset-1 border border-dashed border-[#8b0000] rounded-full animate-spin-slow"></div>}
+        </div>
+        <span className={`mt-2 text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded ${highlight ? 'bg-[#8b0000] text-white' : 'bg-[#e8e4d9] text-[#5d4037]'}`}>
+            {role}
+        </span>
+        {person && (
+            <span className="text-[10px] text-stone-500 mt-0.5">
+                {person.generation}世
+            </span>
+        )}
+    </div>
+);
 
-    const hasChildren = member.children && member.children.length > 0;
+const WuFuConnector = ({ vertical = true }: { vertical?: boolean }) => (
+    <div className={`${vertical ? 'h-8 w-px' : 'w-8 h-px'} bg-[#5d4037]/50`}></div>
+);
+
+// Five Degrees of Kinship Visualization
+const WuFuVisualizer = ({ member, allMembers }: { member: Person, allMembers: Person[] }) => {
+    const find = (id?: string) => allMembers.find(m => m.id === id);
+    const father = find(member.fatherId);
+    const grandfather = find(father?.fatherId);
+    const greatGrandfather = find(grandfather?.fatherId);
+    const highAncestor = find(greatGrandfather?.fatherId);
+    const siblings = member.fatherId 
+        ? allMembers.filter(m => m.fatherId === member.fatherId && m.id !== member.id)
+        : [];
+    const children = allMembers.filter(m => m.fatherId === member.id);
 
     return (
-        <div className="flex flex-col items-center mx-4">
+        <div className="flex flex-col items-center py-8">
+            <h3 className="text-lg font-bold text-[#5d4037] mb-8 flex items-center gap-2">
+                <Network className="w-5 h-5"/> 五服世系图 (Five Degrees Chart)
+            </h3>
+            <div className="flex flex-col items-center gap-0">
+                <WuFuNode role="高祖" person={highAncestor} />
+                <WuFuConnector />
+                <WuFuNode role="曾祖" person={greatGrandfather} />
+                <WuFuConnector />
+                <WuFuNode role="祖父" person={grandfather} />
+                <WuFuConnector />
+                <WuFuNode role="父亲" person={father} />
+                <WuFuConnector />
+            </div>
+            <div className="relative flex items-center justify-center gap-8 py-4 px-12 bg-[#fff5f5] rounded-full border border-[#8b0000]/20 my-2">
+                {siblings.length > 0 && (
+                    <>
+                        <div className="flex gap-4">
+                            {siblings.slice(0, 2).map(s => (
+                                <WuFuNode key={s.id} role={s.gender === Gender.Male ? "兄弟" : "姐妹"} person={s} />
+                            ))}
+                            {siblings.length > 2 && <div className="text-[#5d4037]">...</div>}
+                        </div>
+                        <div className="w-8 h-px bg-[#8b0000] border-t border-dashed border-[#8b0000]"></div>
+                    </>
+                )}
+                <WuFuNode role="本人" person={member} highlight={true} />
+            </div>
+            <div className="flex flex-col items-center gap-0">
+                <WuFuConnector />
+                <div className="flex gap-4">
+                    {children.length > 0 ? children.map(c => (
+                        <WuFuNode key={c.id} role="子/女" person={c} />
+                    )) : <WuFuNode role="子嗣" />}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// Full Page Member Detail
+const MemberDetailPage = ({ member, familyMembers, globalMembers, onBack, onEdit, onSelect }: { member: Person, familyMembers: Person[], globalMembers: Person[], onBack: () => void, onEdit: (m: Person) => void, onSelect: (m: Person) => void }) => {
+    const [aiBio, setAiBio] = useState("");
+
+    useEffect(() => {
+        setAiBio("");
+        window.scrollTo(0, 0);
+    }, [member.id]);
+
+    const getName = (id: string) => {
+        const m = globalMembers.find(x => x.id === id);
+        return m ? `${m.surname}${m.givenName}` : "未知";
+    };
+
+    const isLocalMember = familyMembers.some(m => m.id === member.id);
+
+    return (
+        <div className="min-h-screen bg-[#f4f1ea] animate-in slide-in-from-right duration-300">
+            <div className="sticky top-0 z-30 bg-[#2c2c2c] text-[#f4f1ea] px-4 py-4 shadow-lg flex justify-between items-center">
+                <div className="flex items-center gap-4">
+                    <button onClick={onBack} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                        <ArrowLeft className="w-6 h-6" />
+                    </button>
+                    <div>
+                        <h1 className="text-xl font-bold font-serif tracking-widest">{member.surname}{member.givenName}</h1>
+                        <p className="text-xs text-stone-400">{member.generation}世 · {member.generationName}字辈</p>
+                    </div>
+                </div>
+                {isLocalMember && (
+                    <button 
+                        onClick={() => onEdit(member)}
+                        className="flex items-center gap-2 bg-[#8b0000] text-white px-4 py-2 rounded text-sm hover:bg-[#a00000] transition-colors"
+                    >
+                        <Edit2 className="w-4 h-4" /> 编辑资料
+                    </button>
+                )}
+            </div>
+
+            <div className="container mx-auto px-4 py-8 max-w-6xl">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <div className="lg:col-span-2 space-y-8">
+                        <Card className="bg-white">
+                            <h3 className="font-bold text-[#8b0000] mb-6 flex items-center gap-2 text-lg border-b pb-2 border-stone-100">
+                                <User className="w-5 h-5" /> 基础信息 (Basic Info)
+                            </h3>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                                <div>
+                                    <label className="text-xs font-bold text-[#5d4037] uppercase opacity-60 block mb-1">字 / 号</label>
+                                    <div className="font-serif text-[#2c2c2c] font-medium">{member.courtesyName || "-"}<span className="mx-1 text-stone-300">/</span>{member.artName || "-"}</div>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-[#5d4037] uppercase opacity-60 block mb-1">性别</label>
+                                    <div className="font-serif text-[#2c2c2c] font-medium">{member.gender === Gender.Male ? "男" : "女"}</div>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-[#5d4037] uppercase opacity-60 block mb-1">生卒年</label>
+                                    <div className="font-serif text-[#2c2c2c] font-medium">{member.birthYear} - {member.deathYear || "至今"}</div>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-[#5d4037] uppercase opacity-60 block mb-1">居住地</label>
+                                    <div className="font-serif text-[#2c2c2c] font-medium">{member.location?.name || "未记录"}</div>
+                                </div>
+                            </div>
+                        </Card>
+                        <Card className="bg-white">
+                            <h3 className="font-bold text-[#8b0000] mb-6 flex items-center gap-2 text-lg border-b pb-2 border-stone-100">
+                                <Users className="w-5 h-5" /> 家族关系 (Relationships)
+                            </h3>
+                            <div className="space-y-4">
+                                <div className="flex items-center p-3 bg-stone-50 rounded border border-stone-100">
+                                    <span className="w-20 font-bold text-[#5d4037] shrink-0 text-sm">父亲:</span>
+                                    <span className="font-bold text-[#2c2c2c]">
+                                        {member.fatherId ? getName(member.fatherId) : <span className="text-stone-400 font-normal italic">未记录</span>}
+                                    </span>
+                                </div>
+                                <div className="flex items-center p-3 bg-stone-50 rounded border border-stone-100">
+                                    <span className="w-20 font-bold text-[#5d4037] shrink-0 text-sm">母亲:</span>
+                                    <span className="font-bold text-[#2c2c2c]">
+                                        {member.motherName || (member.motherId ? getName(member.motherId) : <span className="text-stone-400 font-normal italic">未记录</span>)}
+                                    </span>
+                                </div>
+                                <div className="flex items-start p-3 bg-stone-50 rounded border border-stone-100">
+                                    <span className="w-20 font-bold text-[#5d4037] shrink-0 text-sm mt-1">配偶:</span>
+                                    <div className="flex flex-wrap gap-2">
+                                        {member.spouses && member.spouses.length > 0 ? (
+                                            member.spouses.map((spouseName, i) => {
+                                                const spouseObj = globalMembers.find(m => m.id === spouseName || `${m.surname}${m.givenName}` === spouseName || m.givenName === spouseName);
+                                                return (
+                                                    <span 
+                                                        key={i} 
+                                                        onClick={() => spouseObj && onSelect(spouseObj)}
+                                                        className={`bg-white px-3 py-1 rounded border border-stone-200 text-[#2c2c2c] text-sm shadow-sm flex items-center gap-1 ${spouseObj ? 'cursor-pointer hover:border-[#8b0000] hover:text-[#8b0000]' : ''}`}
+                                                    >
+                                                        {spouseName}
+                                                        {spouseObj && <LinkIcon className="w-3 h-3 opacity-50" />}
+                                                    </span>
+                                                );
+                                            })
+                                        ) : <span className="text-stone-400 font-normal italic mt-1">未记录</span>}
+                                    </div>
+                                </div>
+                                <div className="flex items-start p-3 bg-stone-50 rounded border border-stone-100">
+                                    <span className="w-20 font-bold text-[#5d4037] shrink-0 text-sm mt-1">子女:</span>
+                                    <div className="flex flex-wrap gap-2">
+                                        {member.children && member.children.length > 0 ? member.children.map(cid => {
+                                            const childMember = globalMembers.find(m => m.id === cid);
+                                            return (
+                                                <button 
+                                                    key={cid} 
+                                                    onClick={() => childMember && onSelect(childMember)}
+                                                    className="bg-[#fff5f5] text-[#8b0000] px-3 py-1 rounded text-sm border border-[#8b0000]/20 font-medium shadow-sm hover:bg-[#8b0000] hover:text-white transition-colors"
+                                                >
+                                                    {getName(cid)}
+                                                </button>
+                                            );
+                                        }) : <span className="text-stone-400 font-normal italic mt-1">无记录</span>}
+                                    </div>
+                                </div>
+                            </div>
+                        </Card>
+                        <Card className="bg-white min-h-[300px]">
+                            <div className="flex justify-between items-center mb-6 border-b pb-2 border-stone-100">
+                                <h3 className="font-bold text-[#8b0000] flex items-center gap-2 text-lg">
+                                    <Scroll className="w-5 h-5" /> 生平事迹 (Biography)
+                                </h3>
+                                <button 
+                                    onClick={async () => {
+                                        try {
+                                            if(process.env.API_KEY) {
+                                                setAiBio("正在查阅史料，撰写传记中...");
+                                                const t = await generateBiography(member);
+                                                setAiBio(t || "");
+                                            } else {
+                                                setAiBio("需要配置 API Key 才能使用 AI 撰写功能。");
+                                            }
+                                        } catch(e){
+                                            setAiBio("生成失败，请稍后重试。");
+                                        }
+                                    }} 
+                                    className="text-xs text-[#8b0000] border border-[#8b0000]/30 px-3 py-1.5 rounded flex items-center gap-1 hover:bg-[#8b0000] hover:text-white transition-all"
+                                >
+                                    <Sparkles className="w-3 h-3"/> AI 润色
+                                </button>
+                            </div>
+                            <div className="prose prose-stone max-w-none text-justify font-serif leading-loose text-lg text-stone-700">
+                                {member.biography || <span className="text-stone-400 italic">暂无详细生平记录。</span>}
+                                {aiBio && (
+                                    <div className="mt-8 pt-6 border-t border-dashed border-[#5d4037]/20 bg-[#f9f9f9] p-6 rounded relative">
+                                        <div className="absolute top-0 left-0 bg-[#8b0000] text-white text-[10px] px-2 py-0.5 rounded-br">AI Generated</div>
+                                        <p className="text-stone-700 italic">{aiBio}</p>
+                                    </div>
+                                )}
+                            </div>
+                        </Card>
+                    </div>
+                    <div className="lg:col-span-1 space-y-8">
+                        <Card className="bg-[#fcfbf9] border-[#dcd9cd]">
+                            <WuFuVisualizer member={member} allMembers={globalMembers} />
+                        </Card>
+                        {member.location?.coordinates && (
+                            <Card className="bg-white p-0 overflow-hidden">
+                                <div className="bg-[#e8e4d9] h-48 relative flex items-center justify-center">
+                                    <div className="absolute inset-0 opacity-20 bg-[url('https://upload.wikimedia.org/wikipedia/commons/thumb/1/1a/China_administrative_divisions_navmap.svg/1200px-China_administrative_divisions_navmap.svg.png')] bg-cover bg-center grayscale"></div>
+                                    <div className="relative z-10 flex flex-col items-center">
+                                        <MapPin className="w-8 h-8 text-[#8b0000] drop-shadow-md mb-1 animate-bounce" />
+                                        <span className="bg-white/90 px-3 py-1 rounded shadow text-xs font-bold text-[#5d4037] border border-[#5d4037]/20">
+                                            {member.location.name}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="p-4 bg-stone-50 border-t border-stone-200">
+                                    <h4 className="font-bold text-[#5d4037] mb-1">定居地信息</h4>
+                                    <p className="text-xs text-stone-500">
+                                        {member.location.province} · {member.location.name}
+                                    </p>
+                                </div>
+                            </Card>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- Tree Visualization Components ---
+
+interface TreeNodeProps {
+    memberId: string;
+    allMembers: Person[];
+    globalMembers: Person[]; // For resolving external spouses
+    onSelect: (m: Person) => void;
+    orientation: 'vertical' | 'horizontal';
+    currentDepth: number;
+    maxDepth: number;
+    showFemales: boolean;
+}
+
+const TreeNode: React.FC<TreeNodeProps> = ({ memberId, allMembers, globalMembers, onSelect, orientation, currentDepth, maxDepth, showFemales }) => {
+    const member = allMembers.find(m => m.id === memberId);
+    if (!member) return null;
+    
+    // If filtering females and this is a female, don't render (unless she is a spouse of someone being rendered, but that logic is handled by parent)
+    // However, root nodes could be female. If showFemales is false, we generally hide female descendants.
+    if (!showFemales && member.gender === Gender.Female && member.fatherId) return null;
+
+    if (currentDepth > maxDepth) return null;
+
+    let childrenIds = member.children || [];
+    if (!showFemales) {
+        childrenIds = childrenIds.filter(childId => {
+            const child = allMembers.find(m => m.id === childId);
+            return child && child.gender === Gender.Male;
+        });
+    }
+
+    const spouses = member.spouses || [];
+    const hasSpouses = spouses.length > 0;
+    const hasChildren = childrenIds.length > 0;
+    
+    const isVertical = orientation === 'vertical';
+
+    // --- Spouse Grouping Logic ---
+    const groupedChildren: Record<string, string[]> = {};
+    spouses.forEach(s => groupedChildren[s] = []);
+    groupedChildren['__unassigned__'] = [];
+
+    childrenIds.forEach(cid => {
+            const c = allMembers.find(m => m.id === cid);
+            // Match child mother name to spouse name
+            if (c && c.motherName && spouses.includes(c.motherName)) {
+                groupedChildren[c.motherName].push(cid);
+            } else {
+                groupedChildren['__unassigned__'].push(cid);
+            }
+    });
+
+    const memberBaseStyle = `rounded border text-xs font-bold shadow-sm transition-all hover:shadow-md cursor-pointer flex items-center justify-center relative z-20`;
+    const memberStyleMale = `${memberBaseStyle} bg-[#f4f1ea] border-[#5d4037] text-[#2c2c2c] hover:bg-[#e8e4d9]`;
+    const memberStyleFemale = `${memberBaseStyle} bg-[#fff5f5] border-[#8b0000] text-[#8b0000] hover:bg-[#ffe0e0]`;
+    const spouseStyle = `${memberBaseStyle} bg-[#fff0f0] border-[#ffcccc] text-[#8b0000] hover:bg-[#ffe0e0]`;
+
+    const getMemberStyle = (m: Person) => m.gender === Gender.Male ? memberStyleMale : memberStyleFemale;
+
+    const nodeLayoutClass = isVertical 
+        ? 'py-2 px-1 flex-col writing-mode-vertical-rl min-h-[80px] w-8' 
+        : 'px-2 py-1 flex-row gap-2 min-w-[80px] h-8';
+        
+    const spouseLayoutClass = isVertical
+        ? 'py-2 px-1 flex-col writing-mode-vertical-rl text-[10px] min-h-[60px] w-7'
+        : 'px-2 py-1 flex-row gap-2 text-[10px] min-w-[60px] h-7';
+
+    const renderName = (m: Person) => {
+        const fullGivenName = m.givenName;
+        const genChar = m.generationName;
+        
+        if (!genChar) return <span className="font-bold">{fullGivenName}</span>;
+        const parts = fullGivenName.split(genChar);
+        if (parts.length > 1) {
+            return (
+                <span className="font-serif">
+                    {parts[0]}
+                    <span className="text-[#b91c1c] font-bold mx-px scale-110 inline-block">{genChar}</span>
+                    {parts.slice(1).join(genChar)}
+                </span>
+            );
+        }
+        return <span className="font-bold">{fullGivenName}</span>;
+    };
+
+    return (
+        <div className={`flex ${isVertical ? 'flex-col mx-4' : 'flex-row my-4'} items-center`}>
+            {/* 1. Husband / Main Member */}
             <div 
                 onClick={() => onSelect(member)}
-                className={`
-                    w-12 h-32 border-2 flex flex-col items-center justify-center cursor-pointer transition-all hover:shadow-lg relative
-                    ${member.gender === Gender.Male ? 'border-[#5d4037] bg-[#f4f1ea]' : 'border-[#8b0000] bg-[#fff5f5]'}
-                `}
+                className={`${getMemberStyle(member)} ${nodeLayoutClass}`}
             >
-                <span className="font-calligraphy text-lg writing-mode-vertical-rl py-2">{member.surname}{member.givenName}</span>
+                <span className="font-serif leading-none whitespace-nowrap">{member.surname}{renderName(member)}</span>
             </div>
-            {hasChildren && (
+
+            {/* 2. Path to Spouses/Children */}
+            {(hasSpouses || hasChildren) && currentDepth < maxDepth && (
                 <>
-                    <div className="w-px h-8 bg-[#5d4037]"></div>
-                    <div className="flex relative">
-                        <div className="absolute top-0 left-4 right-4 h-px bg-[#5d4037] -z-10"></div>
-                        <div className="flex pt-4">
-                            {member.children.map(childId => (
-                                <TreeNode key={childId} memberId={childId} allMembers={allMembers} onSelect={onSelect} />
-                            ))}
-                        </div>
+                    {/* Main vertical connector down from Husband */}
+                    <div className={`${isVertical ? 'w-px h-6' : 'h-px w-6'} bg-[#5d4037] opacity-60`}></div>
+
+                    {/* Container for Spouses (or Children if no spouses) */}
+                    <div className={`flex ${isVertical ? 'flex-row gap-8' : 'flex-col gap-8'} relative`}>
+                        
+                        {/* 3A. If Spouses Exist -> Render Spouses Row */}
+                        {hasSpouses ? (
+                            <>
+                                {/* Crossbar for multiple spouses */}
+                                {spouses.length > 1 && (
+                                    <div 
+                                        className={`
+                                            absolute bg-[#5d4037] opacity-60 -z-10
+                                            ${isVertical 
+                                                ? 'top-0 h-px left-8 right-8' 
+                                                : 'left-0 w-px top-8 bottom-8'
+                                            }
+                                        `}
+                                    ></div>
+                                )}
+
+                                {spouses.map((spouseName) => {
+                                    // Try to resolve spouse object from global members for clicking
+                                    const spouseObj = globalMembers.find(m => m.givenName === spouseName || `${m.surname}${m.givenName}` === spouseName || m.id === spouseName);
+                                    const kids = groupedChildren[spouseName] || [];
+
+                                    return (
+                                        <div key={spouseName} className={`flex flex-col items-center relative pt-4`}> 
+                                            {/* Connector from Crossbar to Spouse */}
+                                            {spouses.length > 1 && <div className={`absolute top-0 ${isVertical ? 'h-4 w-px' : 'w-4 h-px'} bg-[#5d4037] opacity-60`}></div>}
+
+                                            {/* Spouse Node */}
+                                            <div 
+                                                onClick={() => spouseObj && onSelect(spouseObj)}
+                                                className={`mb-4 ${spouseStyle} ${spouseLayoutClass} ${!spouseObj && 'cursor-default opacity-80'}`}
+                                                title={spouseObj ? "点击查看详情" : "未关联档案"}
+                                            >
+                                                配: {spouseName}
+                                            </div>
+
+                                            {/* Children of this Spouse */}
+                                            {kids.length > 0 && (
+                                                <div className="flex flex-col items-center">
+                                                     {/* Connector from Spouse to Children */}
+                                                     <div className={`${isVertical ? 'w-px h-6' : 'h-px w-6'} bg-[#5d4037] opacity-60`}></div>
+                                                     
+                                                     <div className={`flex relative ${isVertical ? 'pt-4' : 'pl-4 flex-col'}`}>
+                                                         {/* Crossbar for kids */}
+                                                         {kids.length > 1 && (
+                                                             <div className={`
+                                                                 absolute bg-[#5d4037] opacity-60 -z-10
+                                                                 ${isVertical 
+                                                                    ? 'top-0 h-px left-4 right-4' 
+                                                                    : 'left-0 w-px top-4 bottom-4'
+                                                                 }
+                                                             `}></div>
+                                                         )}
+                                                         
+                                                         <div className={`flex ${isVertical ? 'flex-row' : 'flex-col'}`}>
+                                                            {kids.map((childId, idx) => (
+                                                                <div key={childId} className="relative flex flex-col items-center">
+                                                                     {/* Connector from Crossbar to Child */}
+                                                                    {kids.length > 1 && <div className={`absolute ${isVertical ? 'top-[-16px] h-4 w-px' : 'left-[-16px] w-4 h-px'} bg-[#5d4037] opacity-60`}></div>}
+                                                                    
+                                                                    <TreeNode 
+                                                                        memberId={childId} 
+                                                                        allMembers={allMembers} 
+                                                                        globalMembers={globalMembers}
+                                                                        onSelect={onSelect} 
+                                                                        orientation={orientation}
+                                                                        currentDepth={currentDepth + 1}
+                                                                        maxDepth={maxDepth}
+                                                                        showFemales={showFemales}
+                                                                    />
+                                                                </div>
+                                                            ))}
+                                                         </div>
+                                                     </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+
+                                {/* Handle Unassigned Children (if any exist alongside spouses) */}
+                                {groupedChildren['__unassigned__']?.length > 0 && (
+                                     <div className={`flex flex-col items-center relative pt-4 opacity-70`}>
+                                         <div className={`mb-4 border border-dashed border-stone-300 bg-stone-50 text-stone-400 rounded px-2 py-1 text-[10px]`}>庶出/其他</div>
+                                         <div className={`${isVertical ? 'w-px h-6' : 'h-px w-6'} bg-[#5d4037] opacity-40`}></div>
+                                         <div className={`flex ${isVertical ? 'flex-row' : 'flex-col'} relative pt-4`}>
+                                             {groupedChildren['__unassigned__'].length > 1 && (
+                                                  <div className={`absolute top-0 h-px left-4 right-4 bg-[#5d4037] opacity-40 -z-10`}></div>
+                                             )}
+                                             {groupedChildren['__unassigned__'].map(childId => (
+                                                  <div key={childId} className="relative flex flex-col items-center">
+                                                     {groupedChildren['__unassigned__'].length > 1 && <div className={`absolute top-[-16px] h-4 w-px bg-[#5d4037] opacity-40`}></div>}
+                                                     <TreeNode memberId={childId} allMembers={allMembers} globalMembers={globalMembers} onSelect={onSelect} orientation={orientation} currentDepth={currentDepth + 1} maxDepth={maxDepth} showFemales={showFemales} />
+                                                  </div>
+                                             ))}
+                                         </div>
+                                     </div>
+                                )}
+
+                            </>
+                        ) : (
+                            /* 3B. No Spouses, just Children (Direct Descent) */
+                            <div className={`flex relative ${isVertical ? 'pt-4' : 'pl-4 flex-col'}`}>
+                                 {childrenIds.length > 1 && (
+                                     <div className={`
+                                         absolute bg-[#5d4037] opacity-60 -z-10
+                                         ${isVertical 
+                                            ? 'top-0 h-px left-4 right-4' 
+                                            : 'left-0 w-px top-4 bottom-4'
+                                         }
+                                     `}></div>
+                                 )}
+                                 <div className={`flex ${isVertical ? 'flex-row' : 'flex-col'}`}>
+                                     {childrenIds.map(childId => (
+                                          <div key={childId} className="relative flex flex-col items-center">
+                                             {childrenIds.length > 1 && <div className={`absolute ${isVertical ? 'top-[-16px] h-4 w-px' : 'left-[-16px] w-4 h-px'} bg-[#5d4037] opacity-60`}></div>}
+                                             <TreeNode memberId={childId} allMembers={allMembers} globalMembers={globalMembers} onSelect={onSelect} orientation={orientation} currentDepth={currentDepth + 1} maxDepth={maxDepth} showFemales={showFemales} />
+                                          </div>
+                                     ))}
+                                 </div>
+                            </div>
+                        )}
                     </div>
                 </>
             )}
@@ -95,1859 +573,879 @@ const TreeNode: React.FC<{ memberId: string, allMembers: Person[], onSelect: (m:
     );
 };
 
-// --- Forms ---
+const FamilyTree = ({ family, globalMembers, onSelectMember }: { family: Family, globalMembers: Person[], onSelectMember: (m: Person) => void }) => {
+    const roots = family.members.filter(m => !m.fatherId || m.generation === 1).sort((a,b) => a.birthYear - b.birthYear);
+    const [orientation, setOrientation] = useState<'vertical' | 'horizontal'>('vertical');
+    const [maxGeneration, setMaxGeneration] = useState<number>(20);
+    const [showFemales, setShowFemales] = useState(true);
+    const dataMaxGen = useMemo(() => Math.max(...family.members.map(m => m.generation), 1), [family.members]);
 
-const MemberFormModal = ({ 
-    initialData, 
-    allMembers, 
-    allFamilies,
-    onClose, 
-    onSave 
-}: { 
-    initialData?: Person, 
-    allMembers: Person[], 
-    allFamilies: Family[],
-    onClose: () => void, 
-    onSave: (p: Person) => void 
-}) => {
-    // Default form state
-    const [formData, setFormData] = useState<Person>(initialData || {
-        id: Date.now().toString(),
-        surname: allMembers[0]?.surname || "李",
-        givenName: "",
-        courtesyName: "",
-        artName: "",
-        generation: allMembers.length > 0 ? Math.max(...allMembers.map(m => m.generation)) + 1 : 1,
-        generationName: "",
+    return (
+        <div className="h-full flex flex-col bg-[#e8e4d9] relative overflow-hidden">
+            <div className="bg-[#f4f1ea] border-b border-[#dcd9cd] p-3 flex flex-col xl:flex-row justify-between items-center gap-4 shadow-sm z-30 sticky top-0">
+                 <div className="flex items-center gap-4">
+                     <SectionTitle title="家族世系" sub="Genealogy Tree" />
+                 </div>
+                 <div className="flex flex-wrap items-center gap-4 justify-center">
+                     <button 
+                        onClick={() => setShowFemales(!showFemales)}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-full border text-xs font-bold transition-all ${showFemales ? 'bg-[#fff5f5] border-[#8b0000] text-[#8b0000]' : 'bg-white border-stone-300 text-stone-500'}`}
+                     >
+                        {showFemales ? <Eye className="w-4 h-4"/> : <EyeOff className="w-4 h-4"/>}
+                        {showFemales ? "显示女眷" : "只看男丁"}
+                     </button>
+                     <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-full border border-stone-300 shadow-sm">
+                         <span className="text-xs font-bold text-[#5d4037]">显示深度 (1 - {maxGeneration}世)</span>
+                         <input 
+                            type="range" 
+                            min="1" 
+                            max={100} 
+                            value={maxGeneration} 
+                            onChange={(e) => setMaxGeneration(parseInt(e.target.value))}
+                            className="w-24 md:w-32 accent-[#8b0000] cursor-pointer"
+                         />
+                         <span className="text-xs text-stone-400">当前: {dataMaxGen}世</span>
+                     </div>
+                     <div className="flex bg-white rounded-lg border border-stone-300 overflow-hidden shadow-sm">
+                         <button onClick={() => setOrientation('vertical')} className={`p-2 ${orientation === 'vertical' ? 'bg-[#5d4037] text-white' : 'hover:bg-stone-100 text-stone-600'}`}><Layout className="w-5 h-5" /></button>
+                         <div className="w-px bg-stone-300"></div>
+                         <button onClick={() => setOrientation('horizontal')} className={`p-2 ${orientation === 'horizontal' ? 'bg-[#5d4037] text-white' : 'hover:bg-stone-100 text-stone-600'}`}><LayoutList className="w-5 h-5 rotate-90" /></button>
+                     </div>
+                 </div>
+            </div>
+            <div className="flex-1 overflow-auto p-0 cursor-grab active:cursor-grabbing custom-scrollbar relative bg-[#e8e4d9]">
+                 {orientation === 'vertical' && (
+                     <div className="absolute left-0 top-0 bottom-0 w-20 bg-[#f4f1ea]/80 border-r border-[#dcd9cd] z-10 pointer-events-none flex flex-col pt-10 pb-20">
+                         {Array.from({length: maxGeneration}, (_, i) => i + 1).map(gen => (
+                             <div key={gen} style={{ height: '128px' }} className="flex items-start justify-center pt-4 relative">
+                                 <div className="w-12 h-6 bg-[#5d4037] text-white rounded-r flex items-center justify-center text-[10px] shadow-sm font-serif z-20">第{gen}世</div>
+                                 <div className="absolute top-7 left-12 w-[2000px] h-px border-t border-dashed border-[#5d4037]/10 -z-10"></div>
+                             </div>
+                         ))}
+                     </div>
+                 )}
+                 <div className={`flex ${orientation === 'vertical' ? 'justify-center min-w-max pb-20 pt-10 pl-20' : 'flex-col items-start min-h-max pr-20'}`}>
+                     {roots.map(root => (
+                         <TreeNode 
+                            key={root.id} 
+                            memberId={root.id} 
+                            allMembers={family.members} 
+                            globalMembers={globalMembers}
+                            onSelect={onSelectMember} 
+                            orientation={orientation}
+                            currentDepth={1}
+                            maxDepth={maxGeneration}
+                            showFemales={showFemales}
+                        />
+                     ))}
+                 </div>
+            </div>
+        </div>
+    );
+};
+
+// --- New Components ---
+
+const MemberListView = ({ members, onSelect, onEdit, onDelete, onAdd, familyInfo }: { members: Person[], onSelect: (m: Person) => void, onEdit: (m: Person) => void, onDelete: (m: Person) => void, onAdd: () => void, familyInfo: ClanInfo }) => {
+  const [filter, setFilter] = useState("");
+  
+  const filtered = members.filter(m => 
+    (m.givenName.includes(filter) || m.courtesyName?.includes(filter))
+  );
+
+  return (
+    <div className="p-8 max-w-5xl mx-auto">
+        <div className="flex justify-between items-center mb-6">
+             <h2 className="text-2xl font-bold font-serif text-[#5d4037] flex items-center gap-2">
+                 <List className="w-6 h-6"/> 族谱成员名录
+             </h2>
+             <button onClick={onAdd} className="bg-[#8b0000] text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-[#a00000]">
+                 <Plus className="w-4 h-4" /> 添加成员
+             </button>
+        </div>
+        <div className="bg-white rounded-lg shadow-sm border border-[#dcd9cd] overflow-hidden">
+            <div className="p-4 border-b border-stone-200 bg-stone-50 flex gap-4">
+                <div className="relative flex-1">
+                    <Search className="w-4 h-4 absolute left-3 top-3 text-stone-400" />
+                    <input 
+                        type="text" 
+                        placeholder="搜索名字、字号..." 
+                        className="w-full pl-9 pr-4 py-2 border border-stone-300 rounded focus:outline-none focus:border-[#8b0000]"
+                        value={filter}
+                        onChange={e => setFilter(e.target.value)}
+                    />
+                </div>
+            </div>
+            <table className="w-full text-left text-sm">
+                <thead className="bg-[#f4f1ea] text-[#5d4037] font-bold">
+                    <tr>
+                        <th className="p-4">世系</th>
+                        <th className="p-4">姓名</th>
+                        <th className="p-4">字号</th>
+                        <th className="p-4">生卒年</th>
+                        <th className="p-4">父亲</th>
+                        <th className="p-4 text-right">操作</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-stone-100">
+                    {filtered.map(m => {
+                        const father = members.find(f => f.id === m.fatherId);
+                        return (
+                            <tr key={m.id} className="hover:bg-stone-50 group">
+                                <td className="p-4 font-serif">{m.generation}世</td>
+                                <td className="p-4 font-bold text-[#2c2c2c]">{m.surname}{m.givenName}</td>
+                                <td className="p-4 text-stone-500">{m.courtesyName || "-"}</td>
+                                <td className="p-4 text-stone-500">{m.birthYear} - {m.deathYear || "至今"}</td>
+                                <td className="p-4 text-stone-500">{father ? father.givenName : "-"}</td>
+                                <td className="p-4 text-right flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button onClick={() => onSelect(m)} title="查看" className="p-1 hover:bg-stone-200 rounded text-stone-600"><Eye className="w-4 h-4"/></button>
+                                    <button onClick={() => onEdit(m)} title="编辑" className="p-1 hover:bg-stone-200 rounded text-blue-600"><Edit2 className="w-4 h-4"/></button>
+                                    <button onClick={() => onDelete(m)} title="删除" className="p-1 hover:bg-stone-200 rounded text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                </td>
+                            </tr>
+                        );
+                    })}
+                    {filtered.length === 0 && (
+                        <tr>
+                            <td colSpan={6} className="p-8 text-center text-stone-400 italic">未找到匹配成员</td>
+                        </tr>
+                    )}
+                </tbody>
+            </table>
+        </div>
+    </div>
+  );
+};
+
+const MemberEditPage = ({ initialData, allMembers, allFamilies, currentFamily, onClose, onSave }: { initialData?: Person, allMembers: Person[], allFamilies: Family[], currentFamily: Family, onClose: () => void, onSave: (p: Person) => void }) => {
+    const [formData, setFormData] = useState<Partial<Person>>(initialData || {
+        surname: currentFamily.info.surname,
+        generation: 1,
         gender: Gender.Male,
-        birthYear: 1980,
-        deathYear: undefined,
-        fatherId: "",
+        birthYear: 1900,
         spouses: [],
-        children: [],
-        location: { name: "", province: "" },
-        biography: ""
+        children: []
     });
 
-    // Helper states
-    const [spousesList, setSpousesList] = useState<string[]>(initialData?.spouses || []);
-    const [locationInput, setLocationInput] = useState(initialData?.location?.name || "");
-    const [provinceInput, setProvinceInput] = useState(initialData?.location?.province || "");
+    // Picker State
+    const [pickerType, setPickerType] = useState<'FATHER' | 'MOTHER' | 'SPOUSE' | null>(null);
+    const [targetFamilyId, setTargetFamilyId] = useState<string>("");
+    const [searchTerm, setSearchTerm] = useState("");
+    const [manualName, setManualName] = useState("");
 
-    // Spouse Search State
-    const [spouseSearchQuery, setSpouseSearchQuery] = useState("");
-    const [showSpouseSearch, setShowSpouseSearch] = useState(false);
+    const handleChange = (field: keyof Person, value: any) => {
+        setFormData(prev => ({ ...prev, [field]: value }));
+    };
 
-    // Potential fathers: Males from previous generation (approx)
-    const potentialFathers = useMemo(() => {
-        return allMembers.filter(m => m.gender === Gender.Male && m.generation === formData.generation - 1);
-    }, [allMembers, formData.generation]);
-
-    // Spouse Search Logic
-    const spouseSearchResults = useMemo(() => {
-        if (!spouseSearchQuery) return [];
-        const results: { member: Person, familyName: string, familyHall: string }[] = [];
-        
-        allFamilies.forEach(family => {
-            family.members.forEach(member => {
-                // Filter logic: Match name, exclude self, optionally filter gender if desired (skipped for flexibility)
-                if (member.id !== formData.id && 
-                   (member.surname + member.givenName).includes(spouseSearchQuery)) {
-                    results.push({
-                        member: member,
-                        familyName: family.info.surname,
-                        familyHall: family.info.hallName
-                    });
-                }
-            });
-        });
-        return results;
-    }, [allFamilies, spouseSearchQuery, formData.id]);
-
-    const addSpouse = (name: string) => {
-        if (name && !spousesList.includes(name)) {
-            setSpousesList([...spousesList, name]);
+    const handleSave = () => {
+        if (!formData.givenName) {
+            alert("请输入名字");
+            return;
         }
-        setSpouseSearchQuery("");
-        setShowSpouseSearch(false);
-    };
-
-    const removeSpouse = (indexToRemove: number) => {
-        setSpousesList(spousesList.filter((_, i) => i !== indexToRemove));
-    };
-
-    const handleSubmit = () => {
-        const finalData: Person = {
-            ...formData,
-            spouses: spousesList,
-            location: { 
-                name: locationInput, 
-                province: provinceInput,
-                coordinates: initialData?.location?.coordinates // Preserve coords if editing
-            }
+        const newPerson: Person = {
+            id: initialData?.id || Date.now().toString(),
+            surname: formData.surname || currentFamily.info.surname,
+            givenName: formData.givenName || "",
+            courtesyName: formData.courtesyName,
+            artName: formData.artName,
+            generation: Number(formData.generation),
+            generationName: formData.generationName || "",
+            gender: formData.gender || Gender.Male,
+            birthYear: Number(formData.birthYear),
+            deathYear: formData.deathYear ? Number(formData.deathYear) : undefined,
+            fatherId: formData.fatherId,
+            motherId: formData.motherId,
+            motherName: formData.motherName,
+            spouses: formData.spouses || [],
+            children: formData.children || [],
+            biography: formData.biography,
+            location: formData.location
         };
-        onSave(finalData);
+        onSave(newPerson);
+    };
+
+    // Auto-generation logic
+    useEffect(() => {
+        if (formData.fatherId) {
+            const father = allMembers.find(m => m.id === formData.fatherId);
+            if (father) {
+                setFormData(prev => ({ ...prev, generation: father.generation + 1 }));
+            }
+        }
+    }, [formData.fatherId, allMembers]);
+
+    // --- Helpers for Relationship Suggestions ---
+    
+    // Suggest mothers based on selected father's spouses
+    const suggestedMothers = useMemo(() => {
+        if (!formData.fatherId) return [];
+        // Father could be in current family or linked from another
+        const father = allFamilies.flatMap(f => f.members).find(m => m.id === formData.fatherId);
+        return father?.spouses || [];
+    }, [formData.fatherId, allFamilies]);
+
+    // Picker Logic
+    const handlePickerSelect = (person: Person) => {
+        const name = `${person.surname}${person.givenName}`;
+        if (pickerType === 'FATHER') {
+             setFormData(prev => ({ ...prev, fatherId: person.id }));
+        } else if (pickerType === 'MOTHER') {
+            setFormData(prev => ({ ...prev, motherName: name, motherId: person.id }));
+        } else if (pickerType === 'SPOUSE') {
+            const current = formData.spouses || [];
+            if (!current.includes(name)) {
+                setFormData(prev => ({ ...prev, spouses: [...current, name] }));
+            }
+        }
+        closePicker();
+    };
+
+    const handleManualAdd = () => {
+        if (!manualName) return;
+        if (pickerType === 'MOTHER') {
+            setFormData(prev => ({ ...prev, motherName: manualName, motherId: undefined }));
+        } else if (pickerType === 'SPOUSE') {
+            const current = formData.spouses || [];
+            if (!current.includes(manualName)) {
+                setFormData(prev => ({ ...prev, spouses: [...current, manualName] }));
+            }
+        }
+        closePicker();
+    };
+
+    const closePicker = () => {
+        setPickerType(null);
+        setTargetFamilyId("");
+        setSearchTerm("");
+        setManualName("");
+    };
+
+    const removeSpouse = (name: string) => {
+        setFormData(prev => ({ ...prev, spouses: (prev.spouses || []).filter(s => s !== name) }));
+    };
+    
+    // Filter candidates for picker
+    const candidateMembers = useMemo(() => {
+        if (!targetFamilyId) return [];
+        const fam = allFamilies.find(f => f.id === targetFamilyId);
+        if (!fam) return [];
+        return fam.members.filter(m => {
+            const fullName = `${m.surname}${m.givenName}`;
+            
+            // Gender filtering
+            if (pickerType === 'FATHER' && m.gender !== Gender.Male) return false;
+            // Mother/Spouse filtering usually implies female, but we keep it flexible or strict? 
+            // Usually spouses of a male are female.
+            if (pickerType === 'MOTHER' && m.gender !== Gender.Female) return false;
+            if (pickerType === 'SPOUSE' && formData.gender === Gender.Male && m.gender !== Gender.Female) return false;
+            if (pickerType === 'SPOUSE' && formData.gender === Gender.Female && m.gender !== Gender.Male) return false;
+
+            const matchesSearch = fullName.includes(searchTerm);
+            return matchesSearch;
+        });
+    }, [targetFamilyId, allFamilies, searchTerm, pickerType, formData.gender]);
+
+    const getFatherName = () => {
+        if (!formData.fatherId) return "未设置";
+        const f = allFamilies.flatMap(fam => fam.members).find(m => m.id === formData.fatherId);
+        return f ? `${f.surname}${f.givenName}` : "未知ID";
     };
 
     return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-            <div className="bg-[#f4f1ea] w-full max-w-4xl rounded-lg shadow-2xl flex flex-col max-h-[90vh] overflow-hidden border-2 border-[#5d4037]">
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto flex flex-col animate-in zoom-in-95 duration-200">
                 {/* Header */}
-                <div className="bg-[#2c2c2c] text-[#f4f1ea] p-4 flex justify-between items-center shadow-md">
-                    <h3 className="font-bold text-xl flex items-center gap-2">
-                        <Edit2 className="w-5 h-5" />
-                        {initialData ? "编辑成员 (Edit Member)" : "新增成员 (Add Member)"}
+                <div className="p-6 border-b border-stone-200 flex justify-between items-center sticky top-0 bg-white z-10">
+                    <h3 className="text-xl font-bold font-serif text-[#5d4037]">
+                        {initialData ? "编辑成员资料" : "新增成员资料"}
                     </h3>
-                    <button onClick={onClose}><X className="w-6 h-6 hover:text-red-400" /></button>
+                    <button onClick={onClose}><X className="w-6 h-6 text-stone-400 hover:text-stone-600" /></button>
                 </div>
 
                 {/* Body */}
-                <div className="p-8 overflow-y-auto flex-1 grid grid-cols-1 md:grid-cols-2 gap-8">
-                    {/* Left Column: Identity */}
+                <div className="flex-1 p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
+                    {/* Column 1: Basic Identity */}
                     <div className="space-y-6">
-                        <h4 className="font-bold text-[#8b0000] border-b border-[#8b0000]/30 pb-2 mb-4">基本信息 (Identity)</h4>
-                        
+                         <div className="flex items-center gap-2 mb-4 border-b border-stone-100 pb-2">
+                            <User className="w-5 h-5 text-[#8b0000]" />
+                            <h4 className="font-bold text-stone-700">基本信息</h4>
+                        </div>
                         <div className="grid grid-cols-2 gap-4">
                             <div>
-                                <label className="block text-xs font-bold text-[#5d4037] mb-1">姓 (Surname)</label>
-                                <input 
-                                    className="w-full border p-2 rounded bg-stone-100 font-bold" 
-                                    value={formData.surname} 
-                                    onChange={e => setFormData({...formData, surname: e.target.value})}
-                                />
+                                <label className="block text-xs font-bold text-stone-500 uppercase mb-1">姓氏</label>
+                                <input type="text" value={formData.surname} onChange={e => handleChange('surname', e.target.value)} className="w-full border rounded p-2 bg-stone-50" />
                             </div>
                             <div>
-                                <label className="block text-xs font-bold text-[#5d4037] mb-1">名 (Given Name)</label>
-                                <input 
-                                    className="w-full border p-2 rounded focus:ring-2 ring-[#8b0000]/30 outline-none" 
-                                    value={formData.givenName} 
-                                    onChange={e => setFormData({...formData, givenName: e.target.value})}
-                                    placeholder="如: 崇文"
-                                />
+                                <label className="block text-xs font-bold text-stone-500 uppercase mb-1">名字 (Given Name)</label>
+                                <input type="text" value={formData.givenName || ''} onChange={e => handleChange('givenName', e.target.value)} className="w-full border rounded p-2 border-[#8b0000]" autoFocus />
                             </div>
                         </div>
-
                         <div className="grid grid-cols-2 gap-4">
                             <div>
-                                <label className="block text-xs font-bold text-[#5d4037] mb-1">字 (Courtesy Name)</label>
-                                <input 
-                                    className="w-full border p-2 rounded focus:ring-2 ring-[#8b0000]/30 outline-none" 
-                                    value={formData.courtesyName || ""} 
-                                    onChange={e => setFormData({...formData, courtesyName: e.target.value})}
-                                />
+                                <label className="block text-xs font-bold text-stone-500 uppercase mb-1">字 / 号</label>
+                                <div className="flex gap-2">
+                                     <input type="text" placeholder="字" value={formData.courtesyName || ''} onChange={e => handleChange('courtesyName', e.target.value)} className="w-1/2 border rounded p-2" />
+                                     <input type="text" placeholder="号" value={formData.artName || ''} onChange={e => handleChange('artName', e.target.value)} className="w-1/2 border rounded p-2" />
+                                </div>
                             </div>
                             <div>
-                                <label className="block text-xs font-bold text-[#5d4037] mb-1">号 (Art Name)</label>
-                                <input 
-                                    className="w-full border p-2 rounded focus:ring-2 ring-[#8b0000]/30 outline-none" 
-                                    value={formData.artName || ""} 
-                                    onChange={e => setFormData({...formData, artName: e.target.value})}
-                                />
+                                 <label className="block text-xs font-bold text-stone-500 uppercase mb-1">性别</label>
+                                 <select value={formData.gender} onChange={e => handleChange('gender', e.target.value as Gender)} className="w-full border rounded p-2">
+                                     <option value={Gender.Male}>男</option>
+                                     <option value={Gender.Female}>女</option>
+                                 </select>
                             </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-xs font-bold text-stone-500 uppercase mb-1">出生年份</label>
+                                <input type="number" value={formData.birthYear} onChange={e => handleChange('birthYear', parseInt(e.target.value))} className="w-full border rounded p-2" />
+                            </div>
+                             <div>
+                                <label className="block text-xs font-bold text-stone-500 uppercase mb-1">去世年份</label>
+                                <input type="number" value={formData.deathYear || ''} onChange={e => handleChange('deathYear', e.target.value)} className="w-full border rounded p-2" placeholder="至今" />
+                            </div>
+                        </div>
+                         <div>
+                             <label className="block text-xs font-bold text-stone-500 uppercase mb-1">生平简介</label>
+                             <textarea 
+                                value={formData.biography || ''} 
+                                onChange={e => handleChange('biography', e.target.value)} 
+                                className="w-full border rounded p-2 h-24 text-sm" 
+                             />
+                         </div>
+                    </div>
+
+                    {/* Column 2: Relations */}
+                    <div className="space-y-6">
+                        <div className="flex items-center gap-2 mb-4 border-b border-stone-100 pb-2">
+                            <Users className="w-5 h-5 text-[#8b0000]" />
+                            <h4 className="font-bold text-stone-700">家族关系</h4>
                         </div>
 
                         <div>
-                            <label className="block text-xs font-bold text-[#5d4037] mb-2">性别 (Gender)</label>
-                            <div className="flex gap-4">
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input 
-                                        type="radio" 
-                                        name="gender" 
-                                        checked={formData.gender === Gender.Male} 
-                                        onChange={() => setFormData({...formData, gender: Gender.Male})} 
-                                    />
-                                    <span className="bg-stone-200 px-3 py-1 rounded text-sm">男 (Male)</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input 
-                                        type="radio" 
-                                        name="gender" 
-                                        checked={formData.gender === Gender.Female} 
-                                        onChange={() => setFormData({...formData, gender: Gender.Female})} 
-                                    />
-                                    <span className="bg-stone-200 px-3 py-1 rounded text-sm">女 (Female)</span>
-                                </label>
-                            </div>
+                            <label className="block text-xs font-bold text-stone-500 uppercase mb-1">世系 (Generation)</label>
+                            <input type="number" value={formData.generation} onChange={e => handleChange('generation', parseInt(e.target.value))} className="w-full border rounded p-2" />
                         </div>
 
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-xs font-bold text-[#5d4037] mb-1">世系 (Generation)</label>
-                                <input 
-                                    type="number"
-                                    className="w-full border p-2 rounded focus:ring-2 ring-[#8b0000]/30 outline-none" 
-                                    value={formData.generation} 
-                                    onChange={e => setFormData({...formData, generation: parseInt(e.target.value)})}
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-[#5d4037] mb-1">字辈 (Gen. Name)</label>
-                                <input 
-                                    className="w-full border p-2 rounded focus:ring-2 ring-[#8b0000]/30 outline-none" 
-                                    value={formData.generationName} 
-                                    onChange={e => setFormData({...formData, generationName: e.target.value})}
-                                    placeholder="如: 国"
-                                />
-                            </div>
-                        </div>
-
-                         <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-xs font-bold text-[#5d4037] mb-1">生年 (Birth Year)</label>
-                                <input 
-                                    type="number"
-                                    className="w-full border p-2 rounded focus:ring-2 ring-[#8b0000]/30 outline-none" 
-                                    value={formData.birthYear} 
-                                    onChange={e => setFormData({...formData, birthYear: parseInt(e.target.value)})}
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-[#5d4037] mb-1">卒年 (Death Year)</label>
-                                <input 
-                                    type="number"
-                                    className="w-full border p-2 rounded focus:ring-2 ring-[#8b0000]/30 outline-none" 
-                                    value={formData.deathYear || ""} 
-                                    onChange={e => setFormData({...formData, deathYear: e.target.value ? parseInt(e.target.value) : undefined})}
-                                    placeholder="在世不填"
-                                />
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Right Column: Relationships & Bio */}
-                    <div className="space-y-6">
-                         <h4 className="font-bold text-[#8b0000] border-b border-[#8b0000]/30 pb-2 mb-4">家族关系 (Relationships)</h4>
-                         
-                         <div>
-                            <label className="block text-xs font-bold text-[#5d4037] mb-1">父亲 (Father)</label>
-                            <select 
-                                className="w-full border p-2 rounded focus:ring-2 ring-[#8b0000]/30 outline-none" 
-                                value={formData.fatherId || ""}
-                                onChange={e => setFormData({...formData, fatherId: e.target.value})}
-                            >
-                                <option value="">-- 选择父亲 (上一世系) --</option>
-                                {potentialFathers.map(f => (
-                                    <option key={f.id} value={f.id}>
-                                        {f.generation}世 {f.surname}{f.givenName} ({f.birthYear})
-                                    </option>
-                                ))}
-                            </select>
-                            <p className="text-xs text-stone-400 mt-1">自动关联至父系关系图谱。</p>
-                         </div>
-
-                         <div>
-                            <label className="block text-xs font-bold text-[#5d4037] mb-2">配偶 (Spouses)</label>
-                            
-                            {/* Selected Spouses Tags */}
-                            <div className="flex flex-wrap gap-2 mb-2">
-                                {spousesList.map((spouse, idx) => (
-                                    <div key={idx} className="bg-[#fff5f5] border border-[#8b0000]/30 text-[#8b0000] px-3 py-1 rounded-full text-sm flex items-center gap-2">
-                                        <Heart className="w-3 h-3 fill-current" />
-                                        {spouse}
-                                        <button onClick={() => removeSpouse(idx)} className="hover:text-red-800"><X className="w-3 h-3" /></button>
-                                    </div>
-                                ))}
+                        {/* Father Selection */}
+                        <div>
+                            <label className="block text-xs font-bold text-stone-500 uppercase mb-1">父亲 (Father)</label>
+                            <div className="flex gap-2">
+                                <div className="flex-1 border rounded p-2 bg-stone-50 text-stone-600 flex justify-between items-center">
+                                    <span>{getFatherName()}</span>
+                                    {formData.fatherId && <Check className="w-4 h-4 text-green-500"/>}
+                                </div>
                                 <button 
-                                    onClick={() => setShowSpouseSearch(true)}
-                                    className="bg-stone-100 hover:bg-stone-200 text-stone-600 px-3 py-1 rounded-full text-sm flex items-center gap-1 border border-stone-300 transition-colors"
+                                    onClick={() => setPickerType('FATHER')}
+                                    className="px-3 py-2 bg-stone-100 border rounded text-stone-600 hover:bg-stone-200 whitespace-nowrap text-xs flex items-center gap-1"
                                 >
-                                    <Plus className="w-3 h-3" /> 添加配偶
+                                    <Edit2 className="w-3 h-3" /> 选择
                                 </button>
+                                {formData.fatherId && (
+                                     <button onClick={() => setFormData(p => ({...p, fatherId: undefined}))} className="text-red-500 hover:bg-red-50 p-2 rounded border border-transparent hover:border-red-100"><X className="w-4 h-4"/></button>
+                                 )}
                             </div>
+                        </div>
 
-                            {/* Spouse Search Dropdown */}
-                            {showSpouseSearch && (
-                                <div className="relative mt-2 animate-in fade-in zoom-in-95 duration-200">
-                                    <div className="flex items-center border rounded p-2 bg-white focus-within:ring-2 ring-[#8b0000]/30">
-                                        <Search className="w-4 h-4 text-stone-400 mr-2" />
-                                        <input 
-                                            className="flex-1 outline-none text-sm"
-                                            placeholder="搜索全平台家族成员或直接输入姓名..."
-                                            value={spouseSearchQuery}
-                                            onChange={e => setSpouseSearchQuery(e.target.value)}
-                                            autoFocus
-                                        />
-                                        <button onClick={() => setShowSpouseSearch(false)} className="ml-2 text-stone-400 hover:text-stone-600"><X className="w-4 h-4"/></button>
+                         {/* Mother Selection */}
+                         <div>
+                            <label className="block text-xs font-bold text-stone-500 uppercase mb-1">母亲 (Mother)</label>
+                            <div className="flex gap-2 mb-2">
+                                <input 
+                                    type="text" 
+                                    value={formData.motherName || ''} 
+                                    readOnly 
+                                    placeholder="未设置"
+                                    className="w-full border rounded p-2 bg-stone-50 text-stone-600"
+                                />
+                                 <button 
+                                    onClick={() => setPickerType('MOTHER')}
+                                    className="px-3 py-2 bg-stone-100 border rounded text-stone-600 hover:bg-stone-200 whitespace-nowrap text-xs flex items-center gap-1"
+                                 >
+                                    <Search className="w-3 h-3" /> 选择
+                                 </button>
+                                 {formData.motherName && (
+                                     <button onClick={() => setFormData(p => ({...p, motherName: undefined, motherId: undefined}))} className="text-red-500 hover:bg-red-50 p-2 rounded border border-transparent hover:border-red-100"><X className="w-4 h-4"/></button>
+                                 )}
+                            </div>
+                            
+                            {/* Concubine / Multiple Wives Suggestions */}
+                            {suggestedMothers.length > 0 && (
+                                <div className="bg-[#fffcf5] border border-orange-100 rounded p-2">
+                                    <div className="text-[10px] text-orange-600 font-bold mb-1 flex items-center gap-1">
+                                        <AlertTriangle className="w-3 h-3"/> 父亲的配偶 (建议选择)
                                     </div>
-                                    
-                                    <div className="absolute w-full bg-white border shadow-lg rounded mt-1 max-h-48 overflow-y-auto z-50">
-                                        {/* Dynamic Search Results */}
-                                        {spouseSearchResults.map((res, idx) => (
-                                            <div 
-                                                key={idx}
-                                                onClick={() => addSpouse(`${res.member.surname}${res.member.givenName} (${res.familyName}氏${res.familyHall})`)}
-                                                className="p-2 hover:bg-[#fff5f5] cursor-pointer border-b border-stone-100 flex justify-between items-center group"
+                                    <div className="flex flex-wrap gap-2">
+                                        {suggestedMothers.map((mName) => (
+                                            <button 
+                                                key={mName}
+                                                onClick={() => setFormData(p => ({...p, motherName: mName, motherId: undefined}))} // If we had ID we would link it, simplified here
+                                                className="bg-white border border-orange-200 text-orange-800 px-2 py-0.5 rounded text-xs hover:bg-orange-100"
                                             >
-                                                <div>
-                                                    <div className="font-bold text-[#2c2c2c] group-hover:text-[#8b0000]">
-                                                        {res.member.surname}{res.member.givenName}
-                                                    </div>
-                                                    <div className="text-xs text-stone-500">
-                                                        {res.familyName}氏 · {res.familyHall} · {res.member.generation}世
-                                                    </div>
-                                                </div>
-                                                <div className="text-xs bg-stone-100 px-2 py-1 rounded text-stone-500 group-hover:bg-[#8b0000] group-hover:text-white transition-colors">
-                                                    选择
-                                                </div>
-                                            </div>
+                                                {mName}
+                                            </button>
                                         ))}
-                                        
-                                        {/* Manual Entry Option */}
-                                        {spouseSearchQuery && (
-                                            <div 
-                                                onClick={() => addSpouse(spouseSearchQuery)}
-                                                className="p-2 hover:bg-stone-50 cursor-pointer text-stone-600 italic text-sm border-t flex items-center gap-2"
-                                            >
-                                                <Plus className="w-3 h-3" />
-                                                直接添加 "{spouseSearchQuery}" (非系统成员)
-                                            </div>
-                                        )}
-
-                                        {!spouseSearchQuery && (
-                                            <div className="p-3 text-xs text-stone-400 text-center">请输入姓名查找...</div>
-                                        )}
                                     </div>
                                 </div>
                             )}
-                            <p className="text-xs text-stone-400 mt-1">可搜索其他家族已录入成员，实现家族联姻记录。</p>
-                         </div>
+                        </div>
 
-                         <h4 className="font-bold text-[#8b0000] border-b border-[#8b0000]/30 pb-2 mb-4 mt-8">生平详情 (Details)</h4>
-
-                         <div className="grid grid-cols-2 gap-4">
-                             <div>
-                                <label className="block text-xs font-bold text-[#5d4037] mb-1">定居地 (Location)</label>
-                                <input 
-                                    className="w-full border p-2 rounded" 
-                                    value={locationInput}
-                                    onChange={e => setLocationInput(e.target.value)}
-                                    placeholder="城市/村庄"
-                                />
-                             </div>
-                             <div>
-                                <label className="block text-xs font-bold text-[#5d4037] mb-1">省份 (Province)</label>
-                                <input 
-                                    className="w-full border p-2 rounded" 
-                                    value={provinceInput}
-                                    onChange={e => setProvinceInput(e.target.value)}
-                                    placeholder="省份"
-                                />
-                             </div>
-                         </div>
-
+                        {/* Spouses Selection */}
                          <div>
-                            <label className="block text-xs font-bold text-[#5d4037] mb-1">传记 (Biography)</label>
-                            <textarea 
-                                className="w-full border p-2 rounded h-32 focus:ring-2 ring-[#8b0000]/30 outline-none"
-                                value={formData.biography || ""}
-                                onChange={e => setFormData({...formData, biography: e.target.value})}
-                                placeholder="简述生平事迹、功名、职业等..."
-                            />
+                             <label className="block text-xs font-bold text-stone-500 uppercase mb-2">配偶 (Spouses)</label>
+                             <div className="flex flex-wrap gap-2 mb-2 p-3 border rounded min-h-[50px] bg-stone-50 items-start">
+                                 {(formData.spouses || []).map(spouse => (
+                                     <span key={spouse} className="bg-white border border-[#dcd9cd] px-3 py-1 rounded-full text-sm flex items-center gap-1 shadow-sm text-[#5d4037] group">
+                                         {spouse}
+                                         <button onClick={() => removeSpouse(spouse)} className="text-stone-300 hover:text-red-500 ml-1"><X className="w-3 h-3"/></button>
+                                     </span>
+                                 ))}
+                                 <button 
+                                    onClick={() => setPickerType('SPOUSE')}
+                                    className="bg-[#5d4037] text-white px-3 py-1 rounded-full text-xs hover:bg-[#4a332a] flex items-center gap-1 shadow-sm"
+                                 >
+                                     <Plus className="w-3 h-3" /> 添加
+                                 </button>
+                             </div>
+                             <p className="text-[10px] text-stone-400">点击“添加”可手动录入或搜索联姻家族成员。</p>
                          </div>
                     </div>
                 </div>
 
                 {/* Footer */}
-                <div className="p-4 bg-stone-100 border-t flex justify-end gap-4">
-                    <button onClick={onClose} className="px-6 py-2 rounded border border-stone-300 text-stone-600 hover:bg-stone-200 transition-colors">取消</button>
-                    <button onClick={handleSubmit} className="px-8 py-2 rounded bg-[#8b0000] text-white hover:bg-red-900 transition-colors shadow-lg flex items-center gap-2">
-                        <Save className="w-4 h-4" /> 保存信息
+                <div className="p-6 border-t border-stone-200 bg-stone-50 flex justify-end gap-3 sticky bottom-0">
+                    <button onClick={onClose} className="px-6 py-2 text-stone-600 hover:bg-stone-200 rounded font-medium">取消</button>
+                    <button onClick={handleSave} className="px-8 py-2 bg-[#8b0000] text-white rounded hover:bg-[#a00000] shadow-md font-bold flex items-center gap-2">
+                        <Save className="w-4 h-4"/> 保存资料
                     </button>
                 </div>
-            </div>
-        </div>
-    );
-};
 
-// --- Family App Views (The "Inner" App) ---
-
-const FamilyHome = ({ family, onNavigate }: { family: Family, onNavigate: (p: string) => void }) => (
-    <div className="container mx-auto px-4 max-w-5xl space-y-8 animate-in fade-in">
-        <div className="relative h-[400px] w-full bg-[#e8e4d9] overflow-hidden flex flex-col items-center justify-center text-center border-y-4 border-double border-[#5d4037]/30">
-            <div className="absolute inset-0 opacity-10 bg-[url('https://www.transparenttextures.com/patterns/rice-paper-2.png')]"></div>
-            <div className="z-10 flex flex-col items-center">
-                <div className="w-24 h-24 bg-stone-800 rounded-full flex items-center justify-center text-white text-5xl font-calligraphy mb-6 shadow-xl ring-4 ring-[#8b0000]/30">
-                    {family.info.surname}
-                </div>
-                <h1 className="text-5xl font-serif text-[#2c2c2c] mb-2">{family.info.surname}氏宗族</h1>
-                <p className="text-xl text-[#5d4037] font-light tracking-[0.3em] mb-6">{family.info.hallName}</p>
-                <div className="flex gap-2">
-                    <Stamp text="源远" />
-                    <Stamp text="流长" />
-                </div>
-            </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
-             <div className="md:col-span-1">
-                 <Card className="h-full flex flex-col items-center justify-center bg-[#2c2c2c] text-[#f4f1ea]">
-                    <h3 className="font-calligraphy text-2xl mb-4 border-b border-stone-600 pb-2">家训</h3>
-                    <div className="vertical-text h-64 text-lg font-light tracking-widest leading-loose">
-                        {family.info.motto}
-                    </div>
-                 </Card>
-            </div>
-            <div className="md:col-span-2 grid grid-cols-2 gap-4">
-                 <button onClick={() => onNavigate('tree')} className="group p-6 bg-white border border-stone-200 hover:border-[#8b0000] transition-colors shadow-sm flex flex-col items-center justify-center text-center">
-                    <GitGraph className="w-10 h-10 text-[#5d4037] mb-3 group-hover:scale-110 transition-transform" />
-                    <span className="text-lg font-serif">浏览族谱</span>
-                 </button>
-                 <button onClick={() => onNavigate('members')} className="group p-6 bg-white border border-stone-200 hover:border-[#8b0000] transition-colors shadow-sm flex flex-col items-center justify-center text-center">
-                    <Users className="w-10 h-10 text-[#5d4037] mb-3 group-hover:scale-110 transition-transform" />
-                    <span className="text-lg font-serif">家族成员</span>
-                 </button>
-                 <button onClick={() => onNavigate('relationship')} className="group p-6 bg-white border border-stone-200 hover:border-[#8b0000] transition-colors shadow-sm flex flex-col items-center justify-center text-center">
-                    <Sparkles className="w-10 h-10 text-[#5d4037] mb-3 group-hover:scale-110 transition-transform" />
-                    <span className="text-lg font-serif">关系计算</span>
-                 </button>
-                 <button onClick={() => onNavigate('history')} className="group p-6 bg-white border border-stone-200 hover:border-[#8b0000] transition-colors shadow-sm flex flex-col items-center justify-center text-center">
-                    <MapIcon className="w-10 h-10 text-[#5d4037] mb-3 group-hover:scale-110 transition-transform" />
-                    <span className="text-lg font-serif">迁徙地图</span>
-                 </button>
-            </div>
-        </div>
-        
-        <Card className="mb-12">
-            <h3 className="text-2xl font-serif font-bold mb-4">关于本支</h3>
-            <p className="text-stone-700 leading-relaxed mb-4 text-justify">
-                始祖 {family.info.ancestor} 公，源于 {family.info.origin}。{family.info.surname}氏一脉，薪火相传。
-            </p>
-            <div className="p-4 bg-stone-100 rounded border-l-4 border-[#8b0000]">
-                <p className="font-bold text-[#5d4037] mb-2">字辈诗</p>
-                <p className="font-serif italic text-lg text-stone-600">{family.info.generationPoem}</p>
-            </div>
-        </Card>
-    </div>
-);
-
-const FamilyTree = ({ family, onSelectMember }: { family: Family, onSelectMember: (m: Person) => void }) => {
-    const roots = family.members.filter(m => m.generation === 1);
-    return (
-        <div className="h-full overflow-auto bg-[#e8e4d9] p-10 cursor-move">
-             <SectionTitle title="家族世系图" sub="Genealogy Tree" />
-             <div className="flex justify-center min-w-max">
-                 {roots.map(root => (
-                     <TreeNode key={root.id} memberId={root.id} allMembers={family.members} onSelect={onSelectMember} />
-                 ))}
-             </div>
-        </div>
-    );
-};
-
-const FamilyMembers = ({ 
-    family, 
-    onSelectMember, 
-    onAdd, 
-    onEdit, 
-    onDelete 
-}: { 
-    family: Family, 
-    onSelectMember: (m: Person) => void,
-    onAdd: () => void,
-    onEdit: (m: Person) => void,
-    onDelete: (id: string) => void
-}) => {
-    const [searchTerm, setSearchTerm] = useState("");
-    const filteredMembers = family.members.filter(m => 
-        (m.surname + m.givenName).includes(searchTerm) || 
-        m.generationName.includes(searchTerm)
-    );
-    return (
-        <div className="container mx-auto px-4 max-w-5xl py-8">
-            <SectionTitle title="宗族成员" sub="Family Members" />
-            
-            {/* Search & Filter Bar */}
-            <div className="mb-8 flex flex-col md:flex-row justify-between items-center gap-4">
-                <div className="relative w-full max-w-md">
-                    <Search className="absolute left-3 top-3 text-stone-400 w-5 h-5" />
-                    <input 
-                        type="text" 
-                        placeholder="搜索姓名、字辈..." 
-                        className="w-full pl-10 pr-4 py-2 bg-white border border-[#5d4037] focus:outline-none focus:ring-2 focus:ring-[#8b0000]/50 rounded-sm font-serif placeholder-stone-400"
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
-                </div>
-                <button 
-                    onClick={onAdd}
-                    className="flex items-center gap-2 bg-[#8b0000] text-white px-4 py-2 rounded shadow-md hover:bg-red-900 transition-colors"
-                >
-                    <UserPlus className="w-5 h-5" /> 新增成员
-                </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                {filteredMembers.map(member => (
-                    <div key={member.id} className="group bg-white border border-stone-200 hover:border-[#8b0000] transition-all shadow-sm hover:shadow-md relative flex flex-col">
-                        <div 
-                            onClick={() => onSelectMember(member)}
-                            className="p-4 cursor-pointer flex-1"
-                        >
-                            <div className="flex items-center gap-4 mb-2">
-                                <div className="w-12 h-12 bg-stone-100 rounded-full flex items-center justify-center overflow-hidden border border-stone-300">
-                                    {member.portrait ? <img src={member.portrait} alt="" className="w-full h-full object-cover" /> : <User className="text-stone-400 w-6 h-6" />}
-                                </div>
-                                <div>
-                                    <h4 className="text-lg font-bold text-[#2c2c2c] group-hover:text-[#8b0000]">{member.surname}{member.givenName}</h4>
-                                    <p className="text-xs text-[#5d4037]">{member.generation}世 | {member.generationName}字辈</p>
-                                </div>
-                            </div>
-                            <div className="text-xs text-stone-500 mt-2 space-y-1">
-                                {member.courtesyName && <p>字: {member.courtesyName}</p>}
-                                <p className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {member.birthYear} - {member.deathYear || "至今"}</p>
-                            </div>
+                {/* --- UNIFIED PICKER MODAL --- */}
+                {pickerType && (
+                    <div className="absolute inset-0 z-[60] bg-white/95 backdrop-blur flex flex-col animate-in fade-in zoom-in-95">
+                        <div className="p-4 border-b flex justify-between items-center bg-stone-100 shadow-sm">
+                             <div>
+                                 <h4 className="font-bold text-[#5d4037] text-lg">
+                                     {pickerType === 'FATHER' && '选择父亲'}
+                                     {pickerType === 'MOTHER' && '选择/设置 母亲'}
+                                     {pickerType === 'SPOUSE' && '添加配偶'}
+                                 </h4>
+                                 <p className="text-xs text-stone-500">
+                                     {pickerType === 'FATHER' ? '通常从本家族中选择，也可选择过继来源。' : '可从其他联姻家族选择，或手动录入。'}
+                                 </p>
+                             </div>
+                             <button onClick={closePicker}><X className="w-6 h-6 text-stone-400 hover:text-stone-700"/></button>
                         </div>
                         
-                        {/* Action Buttons */}
-                        <div className="border-t border-stone-100 p-2 flex justify-end gap-2 bg-stone-50/50">
-                            <button 
-                                onClick={(e) => { e.stopPropagation(); onEdit(member); }}
-                                className="p-1.5 text-stone-500 hover:text-[#5d4037] hover:bg-stone-200 rounded"
-                                title="编辑"
-                            >
-                                <Edit2 className="w-4 h-4" />
-                            </button>
-                            <button 
-                                onClick={(e) => { e.stopPropagation(); onDelete(member.id); }}
-                                className="p-1.5 text-stone-500 hover:text-red-600 hover:bg-red-50 rounded"
-                                title="删除"
-                            >
-                                <Trash2 className="w-4 h-4" />
-                            </button>
-                        </div>
-                    </div>
-                ))}
-            </div>
-        </div>
-    );
-};
-
-// 4. Relationship AI
-const RelationshipPage = ({ family }: { family: Family }) => {
-    const [personA, setPersonA] = useState<string>("");
-    const [personB, setPersonB] = useState<string>("");
-    const [loading, setLoading] = useState(false);
-    const [result, setResult] = useState<{ title: string; explanation: string; wufu?: string } | null>(null);
-
-    const handleAnalyze = async () => {
-        if (!personA || !personB) return;
-        setLoading(true);
-        setResult(null);
-        const pA = family.members.find(m => m.id === personA);
-        const pB = family.members.find(m => m.id === personB);
-        if (pA && pB) {
-            try {
-                if (process.env.API_KEY) {
-                     const jsonStr = await analyzeRelationship(pA, pB, family.members);
-                     const data = JSON.parse(jsonStr || "{}");
-                     setResult(data);
-                } else {
-                    await new Promise(resolve => setTimeout(resolve, 1500));
-                    const genDiff = Math.abs(pA.generation - pB.generation);
-                    setResult({
-                        title: genDiff === 0 ? "同辈宗亲" : "叔侄宗亲",
-                        explanation: `基于世系分析: 相差 ${genDiff} 代`,
-                        wufu: genDiff < 5 ? "五服之内" : "五服之外"
-                    });
-                }
-            } catch (e) {
-                setResult({ title: "分析失败", explanation: "请重试", wufu: "" });
-            }
-        }
-        setLoading(false);
-    };
-
-    return (
-        <div className="container mx-auto px-4 max-w-3xl py-12">
-            <SectionTitle title="亲缘关系推演" sub="AI Relationship Calculator" />
-            <Card className="bg-white/80">
-                <div className="flex flex-col md:flex-row gap-4 mb-4">
-                     <select className="flex-1 p-2 border" value={personA} onChange={e => setPersonA(e.target.value)}>
-                         <option value="">选择成员 A</option>
-                         {family.members.map(m => <option key={m.id} value={m.id}>{m.generation}世 - {m.surname}{m.givenName}</option>)}
-                     </select>
-                     <select className="flex-1 p-2 border" value={personB} onChange={e => setPersonB(e.target.value)}>
-                         <option value="">选择成员 B</option>
-                         {family.members.map(m => <option key={m.id} value={m.id}>{m.generation}世 - {m.surname}{m.givenName}</option>)}
-                     </select>
-                </div>
-                <div className="text-center">
-                    <button onClick={handleAnalyze} disabled={loading} className="px-6 py-2 bg-[#2c2c2c] text-white rounded-sm">{loading ? "计算中..." : "推演"}</button>
-                </div>
-            </Card>
-            {result && (
-                <div className="mt-8 bg-[#fff5f5] border border-[#8b0000] p-6 text-center animate-in slide-in-from-bottom-2">
-                    <h3 className="text-2xl font-bold text-[#8b0000] mb-2">{result.title}</h3>
-                    <p className="text-stone-600">{result.explanation}</p>
-                </div>
-            )}
-        </div>
-    );
-};
-
-const MigrationMap = ({ members }: { members: Person[] }) => {
-    // Fixed China bounds approximation for visualization
-    const bounds = { minLng: 73, maxLng: 136, minLat: 18, maxLat: 54 };
-
-    const project = (lat: number, lng: number) => {
-        const x = ((lng - bounds.minLng) / (bounds.maxLng - bounds.minLng)) * 100;
-        // Adjust y for simple equirectangular projection approximation on this specific map image
-        const y = 100 - ((lat - bounds.minLat) / (bounds.maxLat - bounds.minLat)) * 100;
-        return { x, y };
-    };
-
-    // Collect paths: connect parent to child
-    const paths: {x1: number, y1: number, x2: number, y2: number, key: string}[] = [];
-    const points: {x: number, y: number, member: Person, key: string}[] = [];
-
-    members.forEach(m => {
-        if (m.location?.coordinates) {
-            const { x, y } = project(m.location.coordinates.lat, m.location.coordinates.lng);
-            // Filter out of bounds points (e.g. overseas) to keep map clean
-            if (x >= 0 && x <= 100 && y >= 0 && y <= 100) {
-                points.push({ x, y, member: m, key: m.id });
-
-                if (m.fatherId) {
-                    const father = members.find(f => f.id === m.fatherId);
-                    if (father && father.location?.coordinates) {
-                        // Only draw if locations are different enough
-                        if (father.location.name !== m.location.name) {
-                            const start = project(father.location.coordinates.lat, father.location.coordinates.lng);
-                             if (start.x >= 0 && start.x <= 100 && start.y >= 0 && start.y <= 100) {
-                                paths.push({ x1: start.x, y1: start.y, x2: x, y2: y, key: `${father.id}-${m.id}` });
-                             }
-                        }
-                    }
-                }
-            }
-        }
-    });
-
-    return (
-        <Card className="mb-12 overflow-hidden bg-[#e8e4d9] p-0 shadow-lg border-2 border-[#5d4037]/20">
-             <div className="relative w-full aspect-[4/3] bg-[#a8c0dbd0]">
-                {/* Background Map Image */}
-                <div 
-                    className="absolute inset-0 bg-contain bg-no-repeat bg-center opacity-40 mix-blend-multiply"
-                    style={{ backgroundImage: "url('https://upload.wikimedia.org/wikipedia/commons/thumb/1/1a/China_administrative_divisions_navmap.svg/1200px-China_administrative_divisions_navmap.svg.png')" }}
-                ></div>
-
-                <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-                    <defs>
-                        <marker id="arrowhead" markerWidth="3" markerHeight="3" refX="2" refY="1.5" orient="auto">
-                            <polygon points="0 0, 3 1.5, 0 3" fill="#8b0000" />
-                        </marker>
-                    </defs>
-                    
-                    {paths.map(p => (
-                        <path 
-                            key={p.key}
-                            d={`M ${p.x1} ${p.y1} Q ${(p.x1+p.x2)/2} ${(p.y1+p.y2)/2 - 5} ${p.x2} ${p.y2}`}
-                            fill="none"
-                            stroke="#8b0000"
-                            strokeWidth="0.4"
-                            strokeDasharray="1,1"
-                            markerEnd="url(#arrowhead)"
-                            className="opacity-60"
-                        />
-                    ))}
-
-                    {points.map(p => (
-                        <g key={p.key} className="group cursor-pointer">
-                            <circle cx={p.x} cy={p.y} r="1.5" fill="#5d4037" className="group-hover:fill-[#8b0000] transition-colors shadow-sm" />
-                            <circle cx={p.x} cy={p.y} r="3" fill="none" stroke="#5d4037" strokeWidth="0.1" className="animate-ping opacity-30" />
+                        <div className="flex-1 overflow-y-auto p-8 max-w-2xl mx-auto w-full space-y-8">
                             
-                            <foreignObject x={p.x - 10} y={p.y + 2} width="20" height="20" className="overflow-visible pointer-events-none">
-                                <div className="text-[2.5px] text-center font-bold text-[#2c2c2c] bg-white/80 rounded-[1px] px-0.5 w-max mx-auto shadow-sm whitespace-nowrap border border-[#5d4037]/20">
-                                    {p.member.location?.name}
+                            {/* Method A: Search & Select */}
+                            <div className="bg-white p-6 rounded-lg border border-stone-200 shadow-sm">
+                                <h5 className="font-bold text-stone-700 mb-4 flex items-center gap-2 pb-2 border-b border-stone-100">
+                                    <div className="w-6 h-6 rounded-full bg-[#8b0000] text-white flex items-center justify-center text-xs">1</div>
+                                    从系统成员中选择
+                                </h5>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="text-xs font-bold text-stone-500 block mb-1">目标家族</label>
+                                        <select 
+                                            className="w-full border p-2.5 rounded text-sm bg-stone-50"
+                                            value={targetFamilyId}
+                                            onChange={e => setTargetFamilyId(e.target.value)}
+                                        >
+                                            <option value="">-- 请选择家族 --</option>
+                                            {allFamilies.map(f => (
+                                                <option key={f.id} value={f.id}>{f.info.surname}氏 ({f.info.hallName})</option>
+                                            ))}
+                                        </select>
+                                    </div>
+
+                                    {targetFamilyId && (
+                                        <div className="animate-in fade-in slide-in-from-top-2">
+                                            <label className="text-xs font-bold text-stone-500 block mb-1">搜索成员</label>
+                                            <div className="relative">
+                                                <input 
+                                                    type="text" 
+                                                    placeholder="输入名字查找..." 
+                                                    className="w-full border p-2.5 pl-9 rounded text-sm"
+                                                    value={searchTerm}
+                                                    onChange={e => setSearchTerm(e.target.value)}
+                                                />
+                                                <Search className="absolute left-3 top-3 w-4 h-4 text-stone-400"/>
+                                            </div>
+                                            
+                                            <div className="mt-2 max-h-48 overflow-y-auto border rounded bg-stone-50 divide-y divide-stone-200">
+                                                {candidateMembers.length === 0 && (
+                                                    <div className="p-4 text-xs text-stone-400 text-center italic">无匹配成员 (请确认性别筛选条件)</div>
+                                                )}
+                                                {candidateMembers.map(m => (
+                                                    <button 
+                                                        key={m.id} 
+                                                        onClick={() => handlePickerSelect(m)}
+                                                        className="w-full text-left p-3 text-sm hover:bg-[#fff5f5] hover:text-[#8b0000] flex justify-between items-center group transition-colors"
+                                                    >
+                                                        <span className="font-bold">{m.surname}{m.givenName}</span>
+                                                        <span className="text-xs text-stone-400 group-hover:text-[#8b0000]/70">
+                                                            {m.gender === Gender.Female ? '女' : '男'} · {m.generation}世
+                                                        </span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
-                            </foreignObject>
-                            
-                            <title>{p.member.generation}世 {p.member.surname}{p.member.givenName} ({p.member.location?.name})</title>
-                        </g>
-                    ))}
-                </svg>
-                
-                <div className="absolute top-4 right-4 bg-white/80 p-2 rounded shadow text-xs border border-[#5d4037]/20">
-                     <div className="flex items-center gap-2 mb-1"><div className="w-2 h-2 rounded-full bg-[#5d4037]"></div> 定居点 (Settlement)</div>
-                     <div className="flex items-center gap-2"><div className="w-4 h-0.5 border-t border-dashed border-[#8b0000]"></div> 迁徙路径 (Migration)</div>
-                </div>
-             </div>
-        </Card>
-    );
-};
-
-const HistoryPage = ({ family }: { family: Family }) => (
-    <div className="container mx-auto px-4 max-w-4xl py-12">
-        <SectionTitle title="家族迁徙图" sub="Migration Map" />
-        <MigrationMap members={family.members} />
-        
-        <div className="h-12 border-b border-[#5d4037]/20 mb-12"></div>
-
-        <SectionTitle title="家族大事记" sub="Chronicle" />
-        <div className="relative border-l-2 border-[#5d4037]/30 ml-6 space-y-8">
-            {family.events.map((event, index) => (
-                <div key={index} className="relative pl-8">
-                    <div className="absolute -left-[9px] top-0 w-4 h-4 bg-[#f4f1ea] border-2 border-[#8b0000] rounded-full"></div>
-                    <div className="bg-white p-4 shadow-sm border border-stone-200">
-                        <span className="text-[#8b0000] font-bold block mb-1">{event.year}年</span>
-                        <h4 className="font-bold text-lg mb-1">{event.title}</h4>
-                        <p className="text-stone-600">{event.description}</p>
-                    </div>
-                </div>
-            ))}
-        </div>
-    </div>
-);
-
-// --- Platform / Portal Components ---
-
-const PortalHome = ({ 
-    surnames, regions, families, 
-    onManageSurnames, onManageRegions, onSelectFamily, onCreateFamily, onGlobalRelationship
-}: {
-    surnames: SurnameData[], regions: Region[], families: Family[],
-    onManageSurnames: () => void, onManageRegions: () => void,
-    onSelectFamily: (id: string) => void, onCreateFamily: () => void,
-    onGlobalRelationship: () => void
-}) => {
-    const [searchQuery, setSearchQuery] = useState("");
-
-    const filteredFamilies = families.filter(f => 
-        f.info.surname.includes(searchQuery) || 
-        f.info.hallName.includes(searchQuery) ||
-        f.info.ancestor.includes(searchQuery)
-    );
-
-    return (
-        <div className="min-h-screen bg-[#e8e4d9] flex flex-col items-center py-20 animate-in fade-in">
-             <div className="text-center mb-12">
-                 <div className="w-24 h-24 mx-auto bg-[#2c2c2c] rounded-full flex items-center justify-center mb-6 shadow-2xl border-4 border-[#5d4037]">
-                     <BookOpen className="w-10 h-10 text-[#f4f1ea]" />
-                 </div>
-                 <h1 className="text-6xl font-serif text-[#2c2c2c] mb-4">传承</h1>
-                 <p className="text-xl text-[#5d4037] tracking-[0.5em] uppercase">Digital Genealogy Platform</p>
-             </div>
-
-             <div className="max-w-6xl w-full px-4 space-y-12">
-                 
-                 {/* 1. Global Search */}
-                 <div className="relative max-w-2xl mx-auto">
-                    <Search className="absolute left-4 top-4 text-stone-400 w-6 h-6" />
-                    <input 
-                        type="text" 
-                        placeholder="搜索宗族、堂号、始祖..."
-                        className="w-full pl-14 pr-6 py-4 bg-white rounded shadow-lg border border-stone-200 focus:outline-none focus:ring-2 focus:ring-[#8b0000] text-lg font-serif"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                    />
-                 </div>
-
-                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                     {/* 2. Platform Tools */}
-                     <div className="space-y-4">
-                         <h3 className="text-xl font-bold text-[#5d4037] border-b pb-2 mb-4">平台功能 (Platform Tools)</h3>
-                         
-                         <div className="grid grid-cols-2 gap-4">
-                             <button onClick={onManageSurnames} className="bg-white p-4 rounded shadow-sm border border-stone-200 hover:border-[#8b0000] text-center group transition-all">
-                                 <BookOpen className="w-8 h-8 mx-auto text-[#5d4037] mb-2 group-hover:scale-110 transition-transform" />
-                                 <span className="font-bold text-stone-700 block">姓氏库</span>
-                                 <span className="text-xs text-stone-400">{surnames.length} 姓</span>
-                             </button>
-
-                             <button onClick={onManageRegions} className="bg-white p-4 rounded shadow-sm border border-stone-200 hover:border-[#8b0000] text-center group transition-all">
-                                 <Globe className="w-8 h-8 mx-auto text-[#5d4037] mb-2 group-hover:scale-110 transition-transform" />
-                                 <span className="font-bold text-stone-700 block">地区管理</span>
-                                 <span className="text-xs text-stone-400">{regions.length} 地</span>
-                             </button>
-                         </div>
-
-                         <button onClick={onGlobalRelationship} className="w-full bg-[#2c2c2c] p-6 rounded shadow-sm border border-stone-600 hover:bg-black text-left group transition-all relative overflow-hidden">
-                             <div className="relative z-10 flex justify-between items-center">
-                                 <div>
-                                     <h4 className="text-lg font-bold text-[#f4f1ea] flex items-center gap-2">
-                                         <Network className="w-5 h-5" /> 跨家族寻亲
-                                     </h4>
-                                     <p className="text-xs text-stone-400 mt-1">Global Relationship Search</p>
-                                 </div>
-                                 <ArrowRight className="text-stone-500 group-hover:text-white transition-colors" />
-                             </div>
-                         </button>
-
-                         <button className="w-full bg-stone-100 p-4 rounded border border-dashed border-stone-300 text-left flex items-center gap-4 opacity-70 cursor-not-allowed">
-                             <div className="bg-stone-200 p-2 rounded-full">
-                                 <Dna className="w-5 h-5 text-stone-500" />
-                             </div>
-                             <div>
-                                 <h4 className="font-bold text-stone-500">DNA 溯源 (Coming Soon)</h4>
-                                 <p className="text-xs text-stone-400">科学验证血脉关联</p>
-                             </div>
-                         </button>
-                     </div>
-
-                     {/* 3. Family List */}
-                     <div className="md:col-span-2">
-                         <div className="flex justify-between items-end border-b pb-2 mb-4 border-[#5d4037]/20">
-                            <h3 className="text-xl font-bold text-[#5d4037]">家族列表 (Families)</h3>
-                            <button onClick={onCreateFamily} className="text-sm flex items-center gap-1 bg-[#8b0000] text-white px-3 py-1 rounded hover:bg-red-900 transition-colors">
-                                <Plus className="w-4 h-4" /> 创建新家族
-                            </button>
-                         </div>
-                         
-                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                             {filteredFamilies.map(family => (
-                                 <div key={family.id} onClick={() => onSelectFamily(family.id)} className="bg-white p-6 rounded shadow-md border-l-4 border-[#8b0000] cursor-pointer hover:shadow-xl hover:-translate-y-1 transition-all relative overflow-hidden group">
-                                     <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                                         <span className="font-calligraphy text-8xl text-[#5d4037]">{family.info.surname}</span>
-                                     </div>
-                                     <div className="relative z-10">
-                                         <div className="flex items-center gap-2 mb-2">
-                                             <span className="bg-[#2c2c2c] text-white text-xs px-2 py-1 rounded-sm">{family.info.hallName}</span>
-                                             <span className="text-xs text-stone-500">{new Date(family.createdAt).getFullYear()}年建</span>
-                                         </div>
-                                         <h4 className="text-2xl font-bold text-[#2c2c2c] mb-1">{family.info.surname}氏宗族</h4>
-                                         <p className="text-sm text-stone-600 mb-4">始祖: {family.info.ancestor} | 成员: {family.members.length}人</p>
-                                         <div className="text-xs text-[#8b0000] flex items-center font-bold">
-                                             进入族谱 <ArrowRight className="w-3 h-3 ml-1" />
-                                         </div>
-                                     </div>
-                                 </div>
-                             ))}
-                             {filteredFamilies.length === 0 && (
-                                 <div className="col-span-full py-12 text-center border-2 border-dashed border-stone-300 rounded text-stone-400">
-                                     <p>{searchQuery ? "未找到匹配的家族" : "暂无家族，请点击右上角创建。"}</p>
-                                 </div>
-                             )}
-                         </div>
-                     </div>
-                 </div>
-             </div>
-        </div>
-    );
-};
-
-const GlobalRelationshipPage = ({ families, onBack }: { families: Family[], onBack: () => void }) => {
-    const [famAId, setFamAId] = useState("");
-    const [memAId, setMemAId] = useState("");
-    const [famBId, setFamBId] = useState("");
-    const [memBId, setMemBId] = useState("");
-    
-    const [loading, setLoading] = useState(false);
-    const [result, setResult] = useState<{ title: string; explanation: string; wufu?: string } | null>(null);
-
-    const famA = families.find(f => f.id === famAId);
-    const famB = families.find(f => f.id === famBId);
-    
-    const memA = famA?.members.find(m => m.id === memAId);
-    const memB = famB?.members.find(m => m.id === memBId);
-
-    const allContextMembers = useMemo(() => {
-        return families.flatMap(f => f.members);
-    }, [families]);
-
-    const handleAnalyze = async () => {
-        if (!memA || !memB) return;
-        setLoading(true);
-        setResult(null);
-
-        try {
-            if (process.env.API_KEY) {
-                const jsonStr = await analyzeRelationship(memA, memB, allContextMembers);
-                const data = JSON.parse(jsonStr || "{}");
-                setResult(data);
-            } else {
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                // Mock result for cross-family
-                setResult({
-                    title: "宗亲",
-                    explanation: `AI分析：虽然${memA.surname}${memA.givenName}与${memB.surname}${memB.givenName}分属不同记载的家族分支（${famA?.info.hallName} vs ${famB?.info.hallName}），但根据辈分与姓氏起源推断，二者可能同源。`,
-                    wufu: "五服之外"
-                });
-            }
-        } catch (e) {
-            setResult({ title: "分析失败", explanation: "AI服务暂时不可用。", wufu: "" });
-        }
-        setLoading(false);
-    };
-
-    return (
-        <div className="min-h-screen bg-[#f4f1ea] animate-in fade-in flex flex-col">
-            <header className="bg-[#2c2c2c] text-white p-4 flex items-center gap-4 sticky top-0 shadow-md z-10">
-                <button onClick={onBack}><ArrowRight className="w-6 h-6 rotate-180" /></button>
-                <h2 className="text-xl font-bold flex items-center gap-2">
-                    <Network className="w-5 h-5" /> 跨家族寻亲 (Global Search)
-                </h2>
-            </header>
-
-            <div className="container mx-auto p-4 md:p-12 max-w-5xl flex-grow">
-                <div className="text-center mb-8">
-                    <h1 className="text-3xl font-serif font-bold text-[#5d4037] mb-2">全平台关系推演</h1>
-                    <p className="text-stone-500">Connecting lineages across different family books.</p>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8 relative">
-                    {/* Connector Line for Desktop */}
-                    <div className="hidden md:block absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 bg-[#f4f1ea] p-2 border-2 border-[#8b0000] rounded-full">
-                        <Sparkles className="w-6 h-6 text-[#8b0000]" />
-                    </div>
-
-                    {/* Person A Selector */}
-                    <Card className="bg-white">
-                        <h3 className="font-bold text-lg mb-4 text-[#5d4037] border-b pb-2">寻亲者 A</h3>
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-xs font-bold text-stone-400 mb-1">选择家族 (Family)</label>
-                                <select className="w-full border p-2 rounded" value={famAId} onChange={e => { setFamAId(e.target.value); setMemAId(""); }}>
-                                    <option value="">-- 选择家族 --</option>
-                                    {families.map(f => <option key={f.id} value={f.id}>{f.info.surname}氏 ({f.info.hallName})</option>)}
-                                </select>
                             </div>
-                            <div>
-                                <label className="block text-xs font-bold text-stone-400 mb-1">选择成员 (Member)</label>
-                                <select className="w-full border p-2 rounded" value={memAId} onChange={e => setMemAId(e.target.value)} disabled={!famAId}>
-                                    <option value="">-- 选择成员 --</option>
-                                    {famA?.members.map(m => <option key={m.id} value={m.id}>{m.generation}世 {m.surname}{m.givenName}</option>)}
-                                </select>
-                            </div>
-                            {memA && (
-                                <div className="mt-4 p-4 bg-stone-50 rounded border flex items-center gap-4">
-                                     <div className="w-12 h-12 bg-stone-200 rounded-full overflow-hidden">
-                                         <img src={memA.portrait || "https://picsum.photos/200"} className="w-full h-full object-cover grayscale" />
-                                     </div>
-                                     <div>
-                                         <div className="font-bold">{memA.surname}{memA.givenName}</div>
-                                         <div className="text-xs text-stone-500">{memA.location?.province} | {memA.generationName}字辈</div>
-                                     </div>
+
+                            {/* Divider if not FATHER picker (Fathers usually exist in system) */}
+                            {pickerType !== 'FATHER' && (
+                                <div className="relative flex py-2 items-center">
+                                    <div className="flex-grow border-t border-stone-200"></div>
+                                    <span className="flex-shrink mx-4 text-stone-400 text-xs font-serif italic">或者 (无法找到档案时)</span>
+                                    <div className="flex-grow border-t border-stone-200"></div>
                                 </div>
                             )}
-                        </div>
-                    </Card>
 
-                    {/* Person B Selector */}
-                    <Card className="bg-white">
-                        <h3 className="font-bold text-lg mb-4 text-[#5d4037] border-b pb-2">寻亲者 B</h3>
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-xs font-bold text-stone-400 mb-1">选择家族 (Family)</label>
-                                <select className="w-full border p-2 rounded" value={famBId} onChange={e => { setFamBId(e.target.value); setMemBId(""); }}>
-                                    <option value="">-- 选择家族 --</option>
-                                    {families.map(f => <option key={f.id} value={f.id}>{f.info.surname}氏 ({f.info.hallName})</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-stone-400 mb-1">选择成员 (Member)</label>
-                                <select className="w-full border p-2 rounded" value={memBId} onChange={e => setMemBId(e.target.value)} disabled={!famBId}>
-                                    <option value="">-- 选择成员 --</option>
-                                    {famB?.members.map(m => <option key={m.id} value={m.id}>{m.generation}世 {m.surname}{m.givenName}</option>)}
-                                </select>
-                            </div>
-                            {memB && (
-                                <div className="mt-4 p-4 bg-stone-50 rounded border flex items-center gap-4">
-                                     <div className="w-12 h-12 bg-stone-200 rounded-full overflow-hidden">
-                                         <img src={memB.portrait || "https://picsum.photos/201"} className="w-full h-full object-cover grayscale" />
-                                     </div>
-                                     <div>
-                                         <div className="font-bold">{memB.surname}{memB.givenName}</div>
-                                         <div className="text-xs text-stone-500">{memB.location?.province} | {memB.generationName}字辈</div>
-                                     </div>
+                            {/* Method B: Manual Input */}
+                            {pickerType !== 'FATHER' && (
+                                <div className="bg-white p-6 rounded-lg border border-stone-200 shadow-sm opacity-90 hover:opacity-100 transition-opacity">
+                                    <h5 className="font-bold text-stone-700 mb-4 flex items-center gap-2 pb-2 border-b border-stone-100">
+                                        <div className="w-6 h-6 rounded-full bg-stone-500 text-white flex items-center justify-center text-xs">2</div>
+                                        手动录入姓名
+                                    </h5>
+                                    <div className="flex gap-2">
+                                        <input 
+                                            type="text" 
+                                            placeholder="输入姓名 (如: 孙氏)" 
+                                            className="flex-1 border p-2.5 rounded text-sm"
+                                            value={manualName}
+                                            onChange={e => setManualName(e.target.value)}
+                                        />
+                                        <button 
+                                            onClick={handleManualAdd}
+                                            disabled={!manualName}
+                                            className="bg-stone-600 text-white px-6 py-2 rounded text-sm disabled:opacity-50 font-medium hover:bg-stone-700"
+                                        >
+                                            确定添加
+                                        </button>
+                                    </div>
+                                    <p className="text-[10px] text-stone-400 mt-2">
+                                        * 手动录入的成员将仅保存名字，无法点击跳转查看详情。
+                                    </p>
                                 </div>
                             )}
-                        </div>
-                    </Card>
-                </div>
-
-                <div className="text-center mb-12">
-                     <button 
-                        onClick={handleAnalyze} 
-                        disabled={loading || !memA || !memB}
-                        className="bg-[#8b0000] text-white text-lg px-8 py-3 rounded shadow-lg hover:bg-red-900 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:scale-105"
-                    >
-                        {loading ? "AI 正在查阅史料..." : "开始推演关系"}
-                     </button>
-                </div>
-
-                {result && (
-                    <div className="max-w-2xl mx-auto bg-white border-2 border-[#8b0000] p-8 relative shadow-2xl animate-in zoom-in-95 duration-500">
-                        <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-[#8b0000] text-white px-4 py-1 font-bold text-sm uppercase tracking-widest shadow">
-                            Analysis Result
-                        </div>
-                        <div className="text-center">
-                            <h2 className="text-4xl font-calligraphy text-[#2c2c2c] mb-4">{result.title}</h2>
-                            {result.wufu && <span className="inline-block bg-stone-100 text-stone-600 px-3 py-1 text-xs mb-6 rounded-full">{result.wufu}</span>}
-                            <div className="text-left bg-[#f4f1ea] p-6 rounded border border-stone-200">
-                                <p className="text-stone-700 leading-relaxed font-serif text-lg">
-                                    {result.explanation}
-                                </p>
-                            </div>
-                            <div className="mt-6 flex justify-center gap-4">
-                                <button className="flex items-center gap-2 text-[#5d4037] text-sm hover:underline">
-                                    <Share2 className="w-4 h-4" /> 分享结果
-                                </button>
-                            </div>
                         </div>
                     </div>
                 )}
-
             </div>
         </div>
     );
 };
 
-const SurnameFormModal = ({ 
-    initialData, onClose, onSave 
-}: { 
-    initialData?: SurnameData, onClose: () => void, onSave: (data: SurnameData) => void 
-}) => {
-    const [formData, setFormData] = useState<SurnameData>(initialData || {
-        character: "",
-        pinyin: "",
-        origin: "",
-        totemDescription: "",
-        halls: [],
-        famousAncestors: [],
-        distribution: ""
-    });
-    const [ancestorsInput, setAncestorsInput] = useState(initialData?.famousAncestors?.join("、") || "");
+const FamilyApp = ({ family, allFamilies, onExit, onUpdateFamily }: { family: Family, allFamilies: Family[], onExit: () => void, onUpdateFamily: (f: Family) => void }) => {
+    const [selectedMember, setSelectedMember] = useState<Person | null>(null);
+    const [viewMode, setViewMode] = useState<'TREE' | 'LIST'>('TREE');
+    const [isEditing, setIsEditing] = useState(false);
+    const [editingMember, setEditingMember] = useState<Person | null>(null);
 
-    const handleSubmit = () => {
-        const updated = {
-            ...formData,
-            famousAncestors: ancestorsInput.split(/[,，、]/).map(s => s.trim()).filter(s => s)
-        };
-        onSave(updated);
-    };
+    const globalMembers = useMemo(() => allFamilies.flatMap(f => f.members), [allFamilies]);
 
-    return (
-        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
-            <div className="bg-white w-full max-w-2xl rounded-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-                <div className="bg-[#2c2c2c] text-white p-4 flex justify-between items-center">
-                    <h3 className="font-bold text-lg">{initialData ? "编辑姓氏" : "新增姓氏"} (Edit Surname)</h3>
-                    <button onClick={onClose}><X className="w-5 h-5" /></button>
-                </div>
-                <div className="p-6 overflow-y-auto space-y-6 flex-1">
-                    <div className="grid grid-cols-2 gap-6">
-                        <div>
-                            <label className="block text-xs font-bold text-[#5d4037] mb-1">姓氏 (Character)</label>
-                            <input 
-                                className="w-full border p-2 rounded text-lg font-bold" 
-                                value={formData.character} 
-                                onChange={e => setFormData({...formData, character: e.target.value})}
-                                disabled={!!initialData} // Disable editing key if updating
-                                placeholder="如: 李"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-[#5d4037] mb-1">拼音 (Pinyin)</label>
-                            <input 
-                                className="w-full border p-2 rounded" 
-                                value={formData.pinyin} 
-                                onChange={e => setFormData({...formData, pinyin: e.target.value})}
-                                placeholder="如: Lǐ"
-                            />
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-[#5d4037] mb-1">起源 (Origin)</label>
-                        <textarea 
-                            className="w-full border p-2 rounded h-24" 
-                            value={formData.origin} 
-                            onChange={e => setFormData({...formData, origin: e.target.value})}
-                            placeholder="简述姓氏起源..."
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-[#5d4037] mb-1">图腾描述 (Totem)</label>
-                        <textarea 
-                            className="w-full border p-2 rounded h-20" 
-                            value={formData.totemDescription || ""} 
-                            onChange={e => setFormData({...formData, totemDescription: e.target.value})}
-                            placeholder="描述姓氏图腾的含义..."
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-[#5d4037] mb-1">地理分布 (Distribution)</label>
-                         <textarea 
-                            className="w-full border p-2 rounded h-20" 
-                            value={formData.distribution || ""} 
-                            onChange={e => setFormData({...formData, distribution: e.target.value})}
-                            placeholder="主要分布省份及现状..."
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-[#5d4037] mb-1">历史名人 (Famous Ancestors)</label>
-                        <input 
-                            className="w-full border p-2 rounded" 
-                            value={ancestorsInput} 
-                            onChange={e => setAncestorsInput(e.target.value)}
-                            placeholder="如: 李白、李世民 (用逗号分隔)"
-                        />
-                    </div>
-                </div>
-                <div className="p-4 bg-stone-50 border-t flex justify-end gap-2">
-                    <button onClick={onClose} className="px-4 py-2 text-stone-600 hover:bg-stone-200 rounded">取消</button>
-                    <button onClick={handleSubmit} className="px-6 py-2 bg-[#8b0000] text-white rounded hover:bg-red-900 flex items-center gap-2">
-                        <Save className="w-4 h-4" /> 保存
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const SurnameManager = ({ 
-    surnames, setSurnames, onBack 
-}: { 
-    surnames: SurnameData[], setSurnames: React.Dispatch<React.SetStateAction<SurnameData[]>>, onBack: () => void 
-}) => {
-    const [selectedSurname, setSelectedSurname] = useState<SurnameData | null>(null);
-    const [showFormModal, setShowFormModal] = useState(false);
-    const [editingData, setEditingData] = useState<SurnameData | undefined>(undefined);
-    const [newHallName, setNewHallName] = useState("");
-    const [searchTerm, setSearchTerm] = useState("");
-
-    const filteredSurnames = useMemo(() => {
-        return surnames.filter(s => 
-            s.character.includes(searchTerm) || 
-            s.pinyin.toLowerCase().includes(searchTerm.toLowerCase())
-        );
-    }, [surnames, searchTerm]);
-
-    const handleOpenCreate = () => {
-        setEditingData(undefined);
-        setShowFormModal(true);
-    };
-
-    const handleOpenEdit = () => {
-        if (selectedSurname) {
-            setEditingData(selectedSurname);
-            setShowFormModal(true);
-        }
-    };
-
-    const handleSaveSurname = (data: SurnameData) => {
-        if (editingData) {
-            // Edit mode
-            setSurnames(prev => prev.map(s => s.character === data.character ? data : s));
-            setSelectedSurname(data);
-        } else {
-            // Create mode
-            if (surnames.find(s => s.character === data.character)) {
-                alert("该姓氏已存在");
-                return;
-            }
-            setSurnames(prev => [...prev, data]);
-        }
-        setShowFormModal(false);
-    };
-
-    const handleAddHall = () => {
-        if (!selectedSurname || !newHallName) return;
-        const updated = { ...selectedSurname, halls: [...selectedSurname.halls, { name: newHallName, description: "新增堂号" }] };
-        setSurnames(prev => prev.map(s => s.character === updated.character ? updated : s));
-        setSelectedSurname(updated);
-        setNewHallName("");
-    };
-
-    return (
-        <div className="min-h-screen bg-[#f4f1ea] flex flex-col animate-in fade-in">
-            <header className="bg-[#2c2c2c] text-white p-4 flex items-center justify-between sticky top-0 z-10">
-                <div className="flex items-center gap-4">
-                    <button onClick={onBack} className="hover:text-stone-300"><ArrowRight className="w-6 h-6 rotate-180" /></button>
-                    <h2 className="text-xl font-bold">姓氏库管理 (Surname Library)</h2>
-                </div>
-                <button onClick={handleOpenCreate} className="bg-[#8b0000] px-4 py-2 rounded text-sm flex items-center gap-2 hover:bg-red-900">
-                    <Plus className="w-4 h-4" /> 新增姓氏
-                </button>
-            </header>
-
-            <div className="flex flex-1 overflow-hidden">
-                {/* Sidebar List */}
-                <div className="w-1/4 border-r border-stone-300 bg-white flex flex-col">
-                    {/* Search Box */}
-                    <div className="p-4 border-b bg-stone-50">
-                        <div className="relative">
-                             <Search className="absolute left-3 top-2.5 w-4 h-4 text-stone-400" />
-                             <input 
-                                 className="w-full pl-9 pr-8 py-2 border rounded-sm text-sm focus:outline-none focus:ring-1 focus:ring-[#8b0000] placeholder-stone-400" 
-                                 placeholder="搜索姓氏或拼音..."
-                                 value={searchTerm}
-                                 onChange={e => setSearchTerm(e.target.value)}
-                             />
-                             {searchTerm && (
-                                 <button onClick={() => setSearchTerm("")} className="absolute right-2 top-2.5 text-stone-400 hover:text-stone-600">
-                                     <X className="w-4 h-4" />
-                                 </button>
-                             )}
-                        </div>
-                    </div>
-                    
-                    {/* List */}
-                    <div className="overflow-y-auto flex-1">
-                        {filteredSurnames.map(s => (
-                            <div 
-                                key={s.character} 
-                                onClick={() => setSelectedSurname(s)}
-                                className={`p-4 border-b cursor-pointer flex justify-between items-center hover:bg-stone-50 transition-colors ${selectedSurname?.character === s.character ? 'bg-stone-100 border-l-4 border-l-[#8b0000]' : ''}`}
-                            >
-                                <span className="font-bold text-lg">{s.character}</span>
-                                <span className="text-xs text-stone-400">{s.halls.length}个堂号</span>
-                            </div>
-                        ))}
-                        {filteredSurnames.length === 0 && (
-                            <div className="p-8 text-center text-stone-400 text-sm">
-                                未找到匹配姓氏
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                {/* Detail View */}
-                <div className="flex-1 p-8 overflow-y-auto">
-                    {selectedSurname ? (
-                        <div className="max-w-4xl mx-auto space-y-8">
-                             {/* Header Card */}
-                             <div className="bg-white p-8 rounded shadow-sm border border-stone-200 relative overflow-hidden">
-                                 <div className="absolute top-0 right-0 p-6 opacity-5 pointer-events-none">
-                                     <span className="text-9xl font-calligraphy">{selectedSurname.character}</span>
-                                 </div>
-                                 <div className="flex justify-between items-start mb-6 border-b pb-4 relative z-10">
-                                     <div className="flex items-center gap-6">
-                                         <div className="w-24 h-24 bg-[#2c2c2c] text-white flex items-center justify-center text-5xl font-calligraphy rounded shadow-lg ring-4 ring-[#8b0000]/20">
-                                             {selectedSurname.character}
-                                         </div>
-                                         <div>
-                                             <h3 className="text-3xl font-bold mb-1">{selectedSurname.character}姓</h3>
-                                             <div className="flex items-center gap-2 text-stone-500">
-                                                 <span className="bg-stone-100 px-2 py-0.5 rounded text-sm font-mono">{selectedSurname.pinyin || "Pinyin"}</span>
-                                                 {selectedSurname.populationRank && <span className="text-xs">人口大约排名: 第{selectedSurname.populationRank}位</span>}
-                                             </div>
-                                         </div>
-                                     </div>
-                                     <button onClick={handleOpenEdit} className="bg-white border border-[#5d4037] text-[#5d4037] px-4 py-2 rounded text-sm flex items-center gap-2 hover:bg-[#5d4037] hover:text-white transition-colors">
-                                         <Edit2 className="w-4 h-4" /> 编辑资料
-                                     </button>
-                                 </div>
-
-                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                     <div>
-                                         <h4 className="font-bold text-[#5d4037] mb-2 flex items-center gap-2">
-                                             <Scroll className="w-4 h-4"/> 起源 (Origin)
-                                         </h4>
-                                         <p className="text-stone-600 leading-relaxed text-justify text-sm h-32 overflow-y-auto pr-2 custom-scrollbar">
-                                             {selectedSurname.origin}
-                                         </p>
-                                     </div>
-                                     <div>
-                                         <h4 className="font-bold text-[#5d4037] mb-2 flex items-center gap-2">
-                                             <Flag className="w-4 h-4"/> 图腾 (Totem)
-                                         </h4>
-                                         <div className="bg-[#f4f1ea] p-3 rounded border border-stone-200 text-sm text-stone-700 h-32 overflow-y-auto">
-                                             {selectedSurname.totemDescription || "暂无图腾描述"}
-                                         </div>
-                                     </div>
-                                 </div>
-                             </div>
-
-                             {/* Distribution Section (Visual Placeholder) */}
-                             <div className="bg-white p-6 rounded shadow-sm border border-stone-200">
-                                 <h4 className="font-bold text-[#5d4037] mb-4 flex items-center gap-2">
-                                     <MapPin className="w-5 h-5" /> 地理分布 (Distribution)
-                                 </h4>
-                                 <div className="flex gap-6">
-                                     {/* Fake Map Visualization */}
-                                     <div className="w-1/3 bg-[#e8e4d9] rounded relative h-48 flex items-center justify-center border-2 border-dashed border-[#5d4037]/20 overflow-hidden">
-                                         <div className="absolute inset-0 opacity-20 bg-[url('https://upload.wikimedia.org/wikipedia/commons/thumb/1/1a/China_administrative_divisions_navmap.svg/1200px-China_administrative_divisions_navmap.svg.png')] bg-cover bg-center grayscale"></div>
-                                         <span className="relative z-10 bg-white/80 px-3 py-1 rounded shadow text-xs font-bold text-[#8b0000]">分布热力图</span>
-                                     </div>
-                                     <div className="w-2/3">
-                                         <p className="text-stone-600 leading-relaxed mb-4 text-justify">
-                                             {selectedSurname.distribution || "暂无详细分布数据。"}
-                                         </p>
-                                         <div className="flex flex-wrap gap-2">
-                                             {["河南", "山东", "四川", "广东", "河北"].map(prov => (
-                                                 <span key={prov} className="px-3 py-1 bg-stone-100 text-stone-600 rounded-full text-xs hover:bg-[#8b0000] hover:text-white transition-colors cursor-default">
-                                                     {prov}
-                                                 </span>
-                                             ))}
-                                         </div>
-                                     </div>
-                                 </div>
-                             </div>
-
-                             {/* Ancestors & Halls Grid */}
-                             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                 {/* Famous Ancestors */}
-                                 <div className="bg-white p-6 rounded shadow-sm border border-stone-200">
-                                     <h4 className="font-bold text-[#5d4037] mb-4 flex items-center gap-2">
-                                        <User className="w-5 h-5"/> 历史名人 (Ancestors)
-                                     </h4>
-                                     <div className="flex flex-wrap gap-2">
-                                         {selectedSurname.famousAncestors && selectedSurname.famousAncestors.length > 0 ? (
-                                             selectedSurname.famousAncestors.map((name, i) => (
-                                                 <span key={i} className="px-3 py-1 bg-[#fff5f5] text-[#8b0000] border border-[#8b0000]/30 rounded text-sm font-serif font-bold">
-                                                     {name}
-                                                 </span>
-                                             ))
-                                         ) : (
-                                             <span className="text-stone-400 text-sm">暂无录入</span>
-                                         )}
-                                     </div>
-                                 </div>
-
-                                 {/* Halls Management (Existing Logic improved) */}
-                                 <div className="bg-white p-6 rounded shadow-sm border border-stone-200">
-                                     <h4 className="font-bold text-[#5d4037] mb-4 flex items-center justify-between">
-                                         <span className="flex items-center gap-2"><HomeIcon className="w-5 h-5"/> 堂号 (Halls)</span>
-                                         <span className="text-xs bg-stone-100 px-2 py-1 rounded">{selectedSurname.halls.length}个</span>
-                                     </h4>
-                                     <div className="space-y-3 h-48 overflow-y-auto pr-1 custom-scrollbar mb-4">
-                                         {selectedSurname.halls.map((h, i) => (
-                                             <div key={i} className="p-3 bg-stone-50 rounded border border-stone-200 hover:border-[#8b0000] transition-colors group">
-                                                 <div className="flex justify-between">
-                                                     <div className="font-bold text-[#2c2c2c]">{h.name}</div>
-                                                     <div className="text-xs text-stone-400">{h.region}</div>
-                                                 </div>
-                                                 <div className="text-xs text-stone-500 mt-1 truncate group-hover:whitespace-normal">{h.description}</div>
-                                             </div>
-                                         ))}
-                                     </div>
-                                     <div className="flex gap-2">
-                                         <input 
-                                            type="text" 
-                                            className="border p-2 rounded flex-1 text-sm" 
-                                            placeholder="新增堂号..." 
-                                            value={newHallName}
-                                            onChange={(e) => setNewHallName(e.target.value)}
-                                         />
-                                         <button onClick={handleAddHall} className="bg-[#5d4037] text-white px-3 rounded text-sm hover:bg-[#4a332a]">添加</button>
-                                     </div>
-                                 </div>
-                             </div>
-                        </div>
-                    ) : (
-                        <div className="h-full flex flex-col items-center justify-center text-stone-400">
-                            <BookOpen className="w-16 h-16 mb-4 opacity-20" />
-                            <p>请选择左侧姓氏进行管理</p>
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {showFormModal && (
-                <SurnameFormModal 
-                    initialData={editingData} 
-                    onClose={() => setShowFormModal(false)}
-                    onSave={handleSaveSurname}
-                />
-            )}
-        </div>
-    );
-};
-
-const RegionManager = ({ regions, setRegions, onBack }: { regions: Region[], setRegions: any, onBack: () => void }) => {
-    const [newName, setNewName] = useState("");
-    const [newProvince, setNewProvince] = useState("");
-    
-    const addRegion = () => {
-        if(newName && newProvince) {
-            setRegions((prev: Region[]) => [...prev, { id: Date.now().toString(), name: newName, province: newProvince }]);
-            setNewName("");
-            setNewProvince("");
-        }
-    };
-
-    return (
-        <div className="min-h-screen bg-[#f4f1ea] animate-in fade-in">
-             <header className="bg-[#2c2c2c] text-white p-4 flex items-center gap-4 sticky top-0">
-                <button onClick={onBack}><ArrowRight className="w-6 h-6 rotate-180" /></button>
-                <h2 className="text-xl font-bold">地区管理 (Region Manager)</h2>
-            </header>
-            <div className="container mx-auto p-8 max-w-4xl">
-                <div className="bg-white p-6 rounded shadow mb-8">
-                    <h3 className="font-bold text-lg mb-4">添加新地区</h3>
-                    <div className="flex gap-4">
-                        <input className="border p-2 rounded flex-1" placeholder="地区名称 (如: 陇西)" value={newName} onChange={e => setNewName(e.target.value)} />
-                        <input className="border p-2 rounded flex-1" placeholder="所属省份 (如: 甘肃)" value={newProvince} onChange={e => setNewProvince(e.target.value)} />
-                        <button onClick={addRegion} className="bg-[#8b0000] text-white px-6 rounded hover:bg-red-900">添加</button>
-                    </div>
-                </div>
-                <div className="grid grid-cols-3 gap-4">
-                    {regions.map(r => (
-                        <div key={r.id} className="bg-white p-4 rounded border shadow-sm flex justify-between items-center">
-                            <div>
-                                <div className="font-bold">{r.name}</div>
-                                <div className="text-xs text-stone-500">{r.province}</div>
-                            </div>
-                            <MapIcon className="text-stone-300 w-5 h-5" />
-                        </div>
-                    ))}
-                </div>
-            </div>
-        </div>
-    )
-};
-
-const CreateFamilyModal = ({ 
-    surnames, regions, onClose, onCreate 
-}: { 
-    surnames: SurnameData[], regions: Region[], onClose: () => void, onCreate: (f: Family) => void 
-}) => {
-    const [surnameChar, setSurnameChar] = useState("");
-    const [hallName, setHallName] = useState("");
-    const [originName, setOriginName] = useState("");
-    const [ancestorName, setAncestorName] = useState("");
-
-    // Search state for surnames
-    const [surnameSearch, setSurnameSearch] = useState("");
-
-    const filteredSurnames = useMemo(() => {
-        return surnames.filter(s => 
-            s.character.includes(surnameSearch) || 
-            (s.pinyin && s.pinyin.toLowerCase().includes(surnameSearch.toLowerCase()))
-        );
-    }, [surnames, surnameSearch]);
-
-    const availableHalls = useMemo(() => {
-        return surnames.find(s => s.character === surnameChar)?.halls || [];
-    }, [surnameChar, surnames]);
-
-    const handleCreate = () => {
-        if (!surnameChar || !hallName || !ancestorName) return;
-        const newFamily: Family = {
-            id: Date.now().toString(),
-            createdAt: Date.now(),
-            members: [],
-            events: [],
-            info: {
-                surname: surnameChar,
-                hallName: hallName,
-                origin: originName,
-                ancestor: ancestorName,
-                motto: "暂无族训",
-                generationPoem: "暂无字辈"
-            }
-        };
-        // Add root ancestor as first member
-        newFamily.members.push({
-            id: "root",
-            surname: surnameChar,
-            givenName: ancestorName,
-            generation: 1,
-            generationName: "始",
-            gender: Gender.Male,
-            birthYear: 0,
-            spouses: [],
-            children: [],
-            location: { name: originName, province: "" }
-        });
-        
-        onCreate(newFamily);
-    };
-
-    return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4">
-            <div className="bg-white w-full max-w-lg rounded shadow-2xl overflow-hidden">
-                <div className="bg-[#2c2c2c] text-white p-4 flex justify-between items-center">
-                    <h3 className="font-bold text-lg">创建新家族 (Create Family)</h3>
-                    <button onClick={onClose}><X className="w-5 h-5" /></button>
-                </div>
-                <div className="p-6 space-y-4">
-                    <div>
-                        <label className="block text-sm font-bold text-[#5d4037] mb-1">选择姓氏 (Surname)</label>
-                        <div className="relative mb-2">
-                             <Search className="absolute left-2 top-2.5 w-4 h-4 text-stone-400" />
-                             <input 
-                                 className="w-full pl-8 pr-2 py-2 border rounded text-sm bg-stone-50 focus:bg-white transition-colors"
-                                 placeholder="搜索姓氏拼音或汉字..."
-                                 value={surnameSearch}
-                                 onChange={e => setSurnameSearch(e.target.value)}
-                             />
-                        </div>
-                        <select 
-                            className="w-full border p-2 rounded max-h-40" 
-                            value={surnameChar} 
-                            onChange={e => setSurnameChar(e.target.value)}
-                            size={6} 
-                        >
-                            {!surnameChar && <option value="">-- 请从列表选择 --</option>}
-                            {filteredSurnames.map(s => <option key={s.character} value={s.character}>{s.character} ({s.pinyin})</option>)}
-                            {filteredSurnames.length === 0 && <option disabled>无匹配结果</option>}
-                        </select>
-                        <p className="text-xs text-stone-400 mt-1">姓氏必须先在姓氏库中存在。如未找到，请先去平台功能中添加。</p>
-                    </div>
-                    <div>
-                         <label className="block text-sm font-bold text-[#5d4037] mb-1">选择堂号 (Hall)</label>
-                         <select className="w-full border p-2 rounded" value={hallName} onChange={e => setHallName(e.target.value)} disabled={!surnameChar}>
-                            <option value="">-- 请选择 --</option>
-                            {availableHalls.map(h => <option key={h.name} value={h.name}>{h.name}</option>)}
-                        </select>
-                    </div>
-                    <div>
-                         <label className="block text-sm font-bold text-[#5d4037] mb-1">发源地 (Origin Region)</label>
-                         <select className="w-full border p-2 rounded" value={originName} onChange={e => setOriginName(e.target.value)}>
-                            <option value="">-- 请选择 --</option>
-                            {regions.map(r => <option key={r.id} value={r.name}>{r.name} ({r.province})</option>)}
-                        </select>
-                    </div>
-                    <div>
-                         <label className="block text-sm font-bold text-[#5d4037] mb-1">始祖名讳 (Ancestor Name)</label>
-                         <input className="w-full border p-2 rounded" placeholder="如: 利贞" value={ancestorName} onChange={e => setAncestorName(e.target.value)} />
-                    </div>
-                </div>
-                <div className="p-4 bg-stone-50 flex justify-end gap-2">
-                    <button onClick={onClose} className="px-4 py-2 text-stone-600 hover:bg-stone-200 rounded">取消</button>
-                    <button onClick={handleCreate} disabled={!surnameChar || !hallName} className="px-4 py-2 bg-[#8b0000] text-white rounded hover:bg-red-900 disabled:opacity-50">创建</button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-// --- Extracted Components for Rules of Hooks Compliance ---
-
-const MemberDetailModal = ({ member, onClose }: { member: Person, onClose: () => void }) => {
-    const [aiBio, setAiBio] = useState("");
-
-    // Reset bio when member changes (though this component is usually unmounted/remounted)
-    useEffect(() => {
-        setAiBio("");
-    }, [member.id]);
-
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-            <div className="bg-[#f4f1ea] w-full max-w-2xl rounded shadow-2xl relative flex flex-col max-h-[90vh] overflow-y-auto">
-                <button onClick={onClose} className="absolute top-4 right-4 p-2"><X className="w-6 h-6" /></button>
-                <div className="bg-[#2c2c2c] text-[#f4f1ea] p-8 text-center relative">
-                    <h2 className="text-3xl font-serif font-bold">{member.surname}{member.givenName}</h2>
-                </div>
-                <div className="p-8">
-                    <p className="mb-4">{member.biography || "暂无传记"}</p>
-                    <button onClick={async () => {
-                        try {
-                            if(process.env.API_KEY) {
-                                const t = await generateBiography(member);
-                                setAiBio(t || "");
-                            } else {
-                                setAiBio("AI Key needed for generation.");
-                            }
-                        } catch(e){}
-                    }} className="text-[#8b0000] text-sm flex items-center gap-1"><Sparkles className="w-3 h-3"/> AI Generate Bio</button>
-                    {aiBio && <p className="mt-2 text-stone-500 italic border-t pt-2">{aiBio}</p>}
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const FamilyApp = ({ 
-    family, 
-    allFamilies,
-    onExit, 
-    onUpdateFamily 
-}: { 
-    family: Family, 
-    allFamilies: Family[],
-    onExit: () => void,
-    onUpdateFamily: (f: Family) => void
-}) => {
-    const [familyPage, setFamilyPage] = useState('home');
-    const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
-    const [showMemberModal, setShowMemberModal] = useState(false);
-    const [editingMember, setEditingMember] = useState<Person | undefined>(undefined);
-
-    const selectedMember = family.members.find(m => m.id === selectedMemberId);
-
-    const handleAddMember = () => {
-        setEditingMember(undefined);
-        setShowMemberModal(true);
-    };
-
-    const handleEditMember = (member: Person) => {
-        setEditingMember(member);
-        setShowMemberModal(true);
-    };
-
-    const handleDeleteMember = (id: string) => {
-        if (!window.confirm("确定要删除该成员吗？这将同时删除其所有后代记录。")) return;
-        
-        let members = [...family.members];
-        const memberToDelete = members.find(m => m.id === id);
-        if (!memberToDelete) return;
-
-        // Recursive deletion function
-        const deleteRecursive = (targetId: string, list: Person[]) => {
-            const target = list.find(m => m.id === targetId);
-            if (!target) return list;
-            
-            // Filter out target
-            let newList = list.filter(m => m.id !== targetId);
-            
-            // Also recursively delete children
-            if (target.children && target.children.length > 0) {
-                 target.children.forEach(childId => {
-                     newList = deleteRecursive(childId, newList);
-                 });
-            }
-            return newList;
-        };
-
-        const updatedMembersList = deleteRecursive(id, members);
-        
-        // Remove from father's children list
-        const finalMembers = updatedMembersList.map(m => {
-            if (m.children && m.children.includes(id)) {
-                return { ...m, children: m.children.filter(cId => cId !== id) };
-            }
-            return m;
-        });
-
-        onUpdateFamily({ ...family, members: finalMembers });
-    };
-
-    const handleSaveMember = (memberData: Person) => {
+    const handleSaveMember = (member: Person) => {
         let updatedMembers = [...family.members];
-        
-        // Check if editing or adding
-        const isNew = !family.members.find(m => m.id === memberData.id);
+        const existingIndex = updatedMembers.findIndex(m => m.id === member.id);
 
-        if (isNew) {
-            updatedMembers.push(memberData);
-            // Link to father
-            if (memberData.fatherId) {
-                 updatedMembers = updatedMembers.map(m => {
-                     if (m.id === memberData.fatherId) {
-                         return { ...m, children: [...(m.children || []), memberData.id] };
-                     }
-                     return m;
-                 });
-            }
+        if (existingIndex >= 0) {
+            // Update
+            updatedMembers[existingIndex] = member;
         } else {
-            // Editing - Replace member data
-            updatedMembers = updatedMembers.map(m => m.id === memberData.id ? memberData : m);
-            
-            // Check if father changed (Simplified: Remove from old father not fully implemented in this quick logic, 
-            // but adding to new father is important if fatherId was newly set)
-            if (memberData.fatherId) {
-                // Ensure linked in father
-                const father = updatedMembers.find(f => f.id === memberData.fatherId);
-                if (father && (!father.children || !father.children.includes(memberData.id))) {
-                     updatedMembers = updatedMembers.map(m => {
-                         if (m.id === memberData.fatherId) {
-                             return { ...m, children: [...(m.children || []), memberData.id] };
-                         }
-                         return m;
-                     });
+            // Add new
+            updatedMembers.push(member);
+            // If has father, update father's children list
+            if (member.fatherId) {
+                const fatherIndex = updatedMembers.findIndex(m => m.id === member.fatherId);
+                if (fatherIndex >= 0) {
+                     const father = updatedMembers[fatherIndex];
+                     if (!father.children.includes(member.id)) {
+                         updatedMembers[fatherIndex] = {
+                             ...father,
+                             children: [...father.children, member.id]
+                         };
+                     }
                 }
             }
         }
         
         onUpdateFamily({ ...family, members: updatedMembers });
-        setShowMemberModal(false);
+        setIsEditing(false);
+        setEditingMember(null);
+        // Refresh detail view if editing the currently viewed member
+        if (selectedMember && selectedMember.id === member.id) {
+            setSelectedMember(member);
+        }
     };
 
+    const handleDeleteMember = (member: Person) => {
+        if (!confirm(`确定要删除 ${member.givenName} 吗？此操作不可撤销，且会影响其后代关系的显示。`)) return;
+        
+        const updatedMembers = family.members.filter(m => m.id !== member.id);
+        // Clean up references in parents
+        if (member.fatherId) {
+            const father = updatedMembers.find(m => m.id === member.fatherId);
+            if (father) {
+                father.children = father.children.filter(cid => cid !== member.id);
+            }
+        }
+        
+        onUpdateFamily({ ...family, members: updatedMembers });
+        if (selectedMember && selectedMember.id === member.id) {
+            setSelectedMember(null);
+        }
+    };
+
+    // Render Edit Page
+    if (isEditing) {
+        return (
+            <MemberEditPage 
+                initialData={editingMember || undefined}
+                allMembers={family.members}
+                allFamilies={allFamilies}
+                currentFamily={family}
+                onClose={() => { setIsEditing(false); setEditingMember(null); }}
+                onSave={handleSaveMember}
+            />
+        );
+    }
+
     return (
-        <div className="min-h-screen flex flex-col font-serif">
-            <header className="bg-[#2c2c2c] text-[#e8e4d9] shadow-lg z-40 sticky top-0">
-                <div className="container mx-auto px-4 h-16 flex items-center justify-between">
-                     <div className="flex items-center gap-3 cursor-pointer" onClick={() => setFamilyPage('home')}>
-                        <div className="w-8 h-8 bg-[#8b0000] rounded-sm flex items-center justify-center font-calligraphy text-white">{family.info.surname}</div>
-                        <span className="text-xl font-bold tracking-widest hidden sm:block">传承 · {family.info.surname}氏</span>
-                    </div>
-                    <nav className="flex gap-4">
-                        {['home', 'tree', 'members', 'relationship', 'history'].map(p => (
-                            <button key={p} onClick={() => setFamilyPage(p)} className={`${familyPage === p ? 'text-white font-bold' : 'text-stone-400'}`}>
-                                {p === 'home' ? '首页' : p === 'tree' ? '族谱' : p === 'members' ? '成员' : p === 'relationship' ? '关系' : '史记'}
-                            </button>
-                        ))}
-                        <div className="w-px h-6 bg-stone-600 mx-2"></div>
-                        <button onClick={onExit} className="text-stone-400 hover:text-white flex items-center gap-1">
-                            <LogOut className="w-4 h-4" /> 退出
-                        </button>
-                    </nav>
-                </div>
-            </header>
-
-            <main className="flex-grow bg-[#f4f1ea]">
-                {familyPage === 'home' && <FamilyHome family={family} onNavigate={setFamilyPage} />}
-                {familyPage === 'tree' && <FamilyTree family={family} onSelectMember={(m) => setSelectedMemberId(m.id)} />}
-                {familyPage === 'members' && (
-                    <FamilyMembers 
-                        family={family} 
-                        onSelectMember={(m) => setSelectedMemberId(m.id)}
-                        onAdd={handleAddMember}
-                        onEdit={handleEditMember}
-                        onDelete={handleDeleteMember}
-                    />
-                )}
-                {familyPage === 'relationship' && <RelationshipPage family={family} />}
-                {familyPage === 'history' && <HistoryPage family={family} />}
-            </main>
-
-            {selectedMember && <MemberDetailModal member={selectedMember} onClose={() => setSelectedMemberId(null)} />}
-            
-            {showMemberModal && (
-                <MemberFormModal 
-                    initialData={editingMember}
-                    allMembers={family.members}
-                    allFamilies={allFamilies}
-                    onClose={() => setShowMemberModal(false)}
-                    onSave={handleSaveMember}
+        <div className="h-screen flex flex-col">
+            {selectedMember ? (
+                <MemberDetailPage 
+                    member={selectedMember} 
+                    familyMembers={family.members}
+                    globalMembers={globalMembers}
+                    onBack={() => setSelectedMember(null)}
+                    onEdit={(m) => {
+                        setEditingMember(m);
+                        setIsEditing(true);
+                    }}
+                    onSelect={(m) => setSelectedMember(m)}
                 />
+            ) : (
+                <div className="flex flex-1 overflow-hidden relative">
+                    {/* Sidebar Info */}
+                    <div className="w-80 bg-[#fbf9f6] border-r border-[#dcd9cd] flex flex-col z-20 shadow-xl absolute md:relative h-full transition-transform -translate-x-full md:translate-x-0">
+                        <div className="p-6 border-b border-[#dcd9cd] bg-[#f4f1ea]">
+                            <button onClick={onExit} className="flex items-center gap-2 text-xs text-[#5d4037] mb-4 hover:underline">
+                                <LogOut className="w-4 h-4" /> 返回首页
+                            </button>
+                            <h1 className="text-3xl font-serif font-bold text-[#2c2c2c] mb-1">{family.info.surname}氏族谱</h1>
+                            <div className="flex items-center gap-2 text-[#8b0000] font-bold text-sm">
+                                <Stamp text={family.info.surname} />
+                                {family.info.hallName}
+                            </div>
+                        </div>
+
+                        <div className="px-6 pt-6">
+                            <h3 className="text-xs font-bold text-[#5d4037] uppercase opacity-60 mb-2 flex items-center gap-1"><Layout className="w-3 h-3"/> 视图模式 (View)</h3>
+                            <div className="flex bg-[#e8e4d9] p-1 rounded-lg">
+                                <button 
+                                    onClick={() => setViewMode('TREE')}
+                                    className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded ${viewMode === 'TREE' ? 'bg-white text-[#5d4037] shadow-sm' : 'text-stone-500 hover:text-[#5d4037]'}`}
+                                >
+                                    <GitGraph className="w-4 h-4"/> 世系图
+                                </button>
+                                <button 
+                                    onClick={() => setViewMode('LIST')}
+                                    className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded ${viewMode === 'LIST' ? 'bg-white text-[#5d4037] shadow-sm' : 'text-stone-500 hover:text-[#5d4037]'}`}
+                                >
+                                    <List className="w-4 h-4"/> 成员表
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
+                            <div>
+                                <h3 className="text-xs font-bold text-[#5d4037] uppercase opacity-60 mb-2 flex items-center gap-1"><BookOpen className="w-3 h-3"/> 族训 (Motto)</h3>
+                                <p className="font-serif text-[#2c2c2c] leading-relaxed italic bg-white p-3 rounded border border-stone-200 shadow-sm text-sm">
+                                    "{family.info.motto}"
+                                </p>
+                            </div>
+                            
+                            <div>
+                                <h3 className="text-xs font-bold text-[#5d4037] uppercase opacity-60 mb-2 flex items-center gap-1"><Dna className="w-3 h-3"/> 字辈 (Generation Poem)</h3>
+                                <div className="flex flex-wrap gap-1">
+                                    {family.info.generationPoem.split('').map((char, i) => (
+                                        <div key={i} className="w-6 h-6 flex items-center justify-center bg-[#5d4037] text-[#f4f1ea] rounded-sm text-xs font-serif shadow-sm">
+                                            {char}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            
+                             <div>
+                                <h3 className="text-xs font-bold text-[#5d4037] uppercase opacity-60 mb-2 flex items-center gap-1"><Flag className="w-3 h-3"/> 发源 (Origin)</h3>
+                                <p className="text-sm text-[#5d4037]">{family.info.origin}</p>
+                            </div>
+                            
+                            <div>
+                                <h3 className="text-xs font-bold text-[#5d4037] uppercase opacity-60 mb-2 flex items-center gap-1"><Users className="w-3 h-3"/> 统计 (Stats)</h3>
+                                <div className="grid grid-cols-2 gap-2 text-sm">
+                                    <div className="bg-white p-2 rounded border text-center">
+                                        <div className="text-lg font-bold text-[#8b0000]">{family.members.length}</div>
+                                        <div className="text-xs text-stone-500">成员总数</div>
+                                    </div>
+                                    <div className="bg-white p-2 rounded border text-center">
+                                         <div className="text-lg font-bold text-[#8b0000]">{Math.max(...family.members.map(m=>m.generation))}</div>
+                                        <div className="text-xs text-stone-500">繁衍代数</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Main Content View */}
+                    <div className="flex-1 relative bg-[#e8e4d9]">
+                        {viewMode === 'TREE' ? (
+                            <FamilyTree family={family} globalMembers={globalMembers} onSelectMember={setSelectedMember} />
+                        ) : (
+                            <MemberListView 
+                                members={family.members} 
+                                onSelect={setSelectedMember} 
+                                onEdit={(m) => { setEditingMember(m); setIsEditing(true); }}
+                                onDelete={handleDeleteMember}
+                                onAdd={() => { setEditingMember(null); setIsEditing(true); }}
+                                familyInfo={family.info} 
+                            />
+                        )}
+                    </div>
+                </div>
             )}
         </div>
     );
 };
 
-// --- Main App Component (Controller) ---
-
 const App = () => {
-    // Platform Data State
-    const [surnames, setSurnames] = useState<SurnameData[]>(MOCK_SURNAMES);
-    const [regions, setRegions] = useState<Region[]>([
-        { id: "1", name: "陇西", province: "甘肃" }, 
-        { id: "2", name: "太原", province: "山西" },
-        { id: "3", name: "绍兴", province: "浙江" },
-        { id: "4", name: "颖川", province: "河南" },
-        { id: "5", name: "清河", province: "河北" },
-        { id: "6", name: "彭城", province: "江苏" },
-        { id: "7", name: "琅琊", province: "山东" },
-        { id: "8", name: "弘农", province: "河南" },
-        { id: "9", name: "江夏", province: "湖北" },
-        { id: "10", name: "天水", province: "甘肃" },
-        { id: "11", name: "京兆", province: "陕西" },
-        { id: "12", name: "陈留", province: "河南" }
-    ]);
     const [families, setFamilies] = useState<Family[]>(() => {
-        return MOCK_SURNAMES.slice(0, 10).map((s, index) => {
-             // 1. Special case for Li (Demo Data)
-             if (s.character === '李') {
-                 return {
-                    id: "default-li",
-                    createdAt: Date.now(),
-                    info: CLAN_INFO,
-                    members: MOCK_MEMBERS,
-                    events: EVENTS
-                 };
-             }
-
-             // 2. Generic case for others
-             const hall = s.halls[0] || { name: `${s.character}氏宗祠`, region: "中原", description: "历史悠久" };
-             const ancestorRaw = s.famousAncestors?.[0] || "始祖";
-             // Extract name parts: Remove surname if present at start, handle "(Title)"
-             let cleanName = ancestorRaw.split('(')[0].trim();
-             let givenName = cleanName;
-             if (cleanName.startsWith(s.character) && cleanName.length > 1) {
-                 givenName = cleanName.substring(s.character.length);
-             } else if (cleanName === s.character) {
-                 givenName = "公"; // Fallback if just surname listed
-             }
-
-             return {
-                 id: `default-${s.pinyin.toLowerCase()}`,
-                 createdAt: Date.now() - (index * 86400000), // Previous days
-                 info: {
-                     surname: s.character,
-                     hallName: hall.name,
-                     origin: hall.region || "中原",
-                     ancestor: cleanName,
-                     motto: "遵纪守法，尊祖敬宗，勤俭持家，和睦乡邻。", // Generic Motto
-                     generationPoem: "福禄寿喜，世代荣昌，祖德流芳，万古长青。" // Generic Poem
-                 },
-                 members: [
-                     {
-                         id: `root-${s.pinyin}`,
-                         surname: s.character,
-                         givenName: givenName,
-                         generation: 1,
-                         generationName: "始",
-                         gender: Gender.Male,
-                         birthYear: -200 + (index * 50), // Rough historical times
-                         spouses: [],
-                         children: [],
-                         location: { name: hall.region || "中原", province: hall.region || "中原" },
-                         biography: `${s.character}姓始祖，${s.origin.substring(0, 50)}...`
-                     }
-                 ],
-                 events: [
-                     { 
-                         year: 1, 
-                         title: "家族起源", 
-                         description: `${s.character}姓起源于${s.origin.substring(0, 10)}...`, 
-                         type: "BIRTH" 
-                     }
-                 ]
-             };
-        });
+        // Initialize mock data
+        const liFamily: Family = {
+            id: "li-family-demo",
+            info: CLAN_INFO,
+            members: MOCK_MEMBERS,
+            events: EVENTS,
+            createdAt: Date.now()
+        };
+        return [liFamily];
     });
+    
+    const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
+    const [searchTerm, setSearchTerm] = useState("");
 
-    // UI State
-    const [view, setView] = useState<'PORTAL' | 'SURNAME_MGR' | 'REGION_MGR' | 'FAMILY_APP' | 'GLOBAL_RELATIONSHIP'>('PORTAL');
-    const [activeFamilyId, setActiveFamilyId] = useState<string | null>(null);
-    const [showCreateModal, setShowCreateModal] = useState(false);
-
-    // Derived
-    const activeFamily = families.find(f => f.id === activeFamilyId);
-
-    // Handlers
-    const handleCreateFamily = (newFamily: Family) => {
-        setFamilies(prev => [...prev, newFamily]);
-        setShowCreateModal(false);
-        setActiveFamilyId(newFamily.id);
-        setView('FAMILY_APP');
+    const handleSelectSurname = (surnameData: SurnameData) => {
+        const existing = families.find(f => f.info.surname === surnameData.character);
+        if (existing) {
+            setSelectedFamilyId(existing.id);
+        } else {
+            const newFamily: Family = {
+                id: Date.now().toString(),
+                info: {
+                    surname: surnameData.character,
+                    hallName: surnameData.halls[0]?.name || "未定堂号",
+                    origin: surnameData.origin,
+                    ancestor: "始祖",
+                    motto: "暂无族训",
+                    generationPoem: "暂无字辈"
+                },
+                members: [],
+                events: [],
+                createdAt: Date.now()
+            };
+            setFamilies(prev => [...prev, newFamily]);
+            setSelectedFamilyId(newFamily.id);
+        }
     };
 
-    const handleSelectFamily = (id: string) => {
-        setActiveFamilyId(id);
-        setView('FAMILY_APP');
+    const currentFamily = families.find(f => f.id === selectedFamilyId);
+
+    const handleUpdateFamily = (updated: Family) => {
+        setFamilies(prev => prev.map(f => f.id === updated.id ? updated : f));
     };
 
-    const handleUpdateFamily = (updatedFamily: Family) => {
-        setFamilies(prev => prev.map(f => f.id === updatedFamily.id ? updatedFamily : f));
-    };
-
-    // Render Logic
-    if (view === 'SURNAME_MGR') {
-        return <SurnameManager surnames={surnames} setSurnames={setSurnames} onBack={() => setView('PORTAL')} />;
-    }
-
-    if (view === 'REGION_MGR') {
-        return <RegionManager regions={regions} setRegions={setRegions} onBack={() => setView('PORTAL')} />;
-    }
-
-    if (view === 'GLOBAL_RELATIONSHIP') {
-        return <GlobalRelationshipPage families={families} onBack={() => setView('PORTAL')} />;
-    }
-
-    if (view === 'FAMILY_APP' && activeFamily) {
-        return <FamilyApp family={activeFamily} allFamilies={families} onExit={() => setView('PORTAL')} onUpdateFamily={handleUpdateFamily} />;
-    }
-
-    // Default: Portal View
-    return (
-        <>
-            <PortalHome 
-                surnames={surnames} 
-                regions={regions} 
-                families={families}
-                onManageSurnames={() => setView('SURNAME_MGR')}
-                onManageRegions={() => setView('REGION_MGR')}
-                onSelectFamily={handleSelectFamily}
-                onCreateFamily={() => setShowCreateModal(true)}
-                onGlobalRelationship={() => setView('GLOBAL_RELATIONSHIP')}
+    if (currentFamily) {
+        return (
+            <FamilyApp 
+                family={currentFamily} 
+                allFamilies={families} 
+                onExit={() => setSelectedFamilyId(null)}
+                onUpdateFamily={handleUpdateFamily}
             />
-            {showCreateModal && (
-                <CreateFamilyModal 
-                    surnames={surnames} 
-                    regions={regions} 
-                    onClose={() => setShowCreateModal(false)} 
-                    onCreate={handleCreateFamily} 
-                />
-            )}
-        </>
+        );
+    }
+
+    const displayedSurnames = MOCK_SURNAMES.filter(s => 
+        s.character.includes(searchTerm) || s.pinyin.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    return (
+        <div className="min-h-screen bg-[#f4f1ea] font-sans text-[#2c2c2c]">
+            <header className="bg-[#2c2c2c] text-[#f4f1ea] py-12 px-4 relative overflow-hidden">
+                <div className="absolute inset-0 opacity-10 bg-[url('https://www.transparenttextures.com/patterns/chinese-pattern.png')]"></div>
+                <div className="container mx-auto text-center relative z-10">
+                   <div className="w-20 h-20 mx-auto bg-[#8b0000] rounded-sm flex items-center justify-center shadow-lg mb-6 border-4 border-[#dcd9cd]">
+                        <span className="font-calligraphy text-5xl text-[#f4f1ea]">族</span>
+                   </div>
+                   <h1 className="text-4xl md:text-5xl font-bold font-serif mb-4 tracking-widest">中华族谱系统</h1>
+                   <p className="text-lg opacity-80 font-serif max-w-2xl mx-auto">Connecting generations, preserving history. Digital genealogy for the modern age.</p>
+                </div>
+            </header>
+            
+            <main className="container mx-auto px-4 py-12">
+                 <div className="max-w-xl mx-auto mb-12 relative">
+                      <input 
+                          type="text" 
+                          placeholder="输入姓氏查找 (Search Surname)..." 
+                          className="w-full pl-12 pr-4 py-4 rounded-full shadow-lg border-2 border-[#dcd9cd] focus:border-[#8b0000] focus:outline-none text-lg"
+                          value={searchTerm}
+                          onChange={e => setSearchTerm(e.target.value)}
+                      />
+                      <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-400 w-6 h-6" />
+                 </div>
+      
+                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-6">
+                     {displayedSurnames.map(s => {
+                         const hasData = families.some(f => f.info.surname === s.character);
+                         return (
+                             <button 
+                                  key={s.character}
+                                  onClick={() => handleSelectSurname(s)}
+                                  className="bg-white rounded-lg shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 overflow-hidden border border-[#dcd9cd] group text-left relative"
+                             >
+                                  {hasData && <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-green-500 ring-2 ring-white"></div>}
+                                  <div className="h-24 bg-[#f4f1ea] flex items-center justify-center group-hover:bg-[#8b0000] transition-colors duration-300">
+                                      <span className="font-calligraphy text-5xl text-[#5d4037] group-hover:text-white transition-colors duration-300">{s.character}</span>
+                                  </div>
+                                  <div className="p-4">
+                                      <div className="flex justify-between items-baseline mb-1">
+                                          <span className="font-bold text-lg">{s.pinyin}</span>
+                                          <span className="text-xs text-stone-400">排名: {s.populationRank}</span>
+                                      </div>
+                                      <p className="text-xs text-stone-500 line-clamp-2">{s.origin}</p>
+                                  </div>
+                             </button>
+                         );
+                     })}
+                 </div>
+                 
+                 {displayedSurnames.length === 0 && (
+                     <div className="text-center text-stone-400 py-20">
+                         <p>未找到该姓氏，请尝试其他关键词。</p>
+                     </div>
+                 )}
+            </main>
+            
+            <footer className="bg-[#2c2c2c] text-stone-500 py-8 text-center text-sm">
+                <p>&copy; 2024 Chinese Genealogy System. Preserving Heritage.</p>
+            </footer>
+        </div>
     );
 };
 

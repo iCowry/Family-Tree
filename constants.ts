@@ -78,6 +78,44 @@ const DETAILED_SURNAMES: SurnameData[] = [
       { name: "颖川堂", description: "陈氏最著名的郡望。", region: "河南" },
       { name: "德星堂", description: "源自东汉陈寔，名德甚高，太史奏德星见五百里。", region: "河南" }
     ]
+  },
+  {
+    character: "姜",
+    pinyin: "Jiāng",
+    origin: "姜姓源出神农氏，炎帝生于姜水，因以水名为姓。姜子牙周初受封于齐，是姜氏最显赫的始祖。",
+    totemDescription: "姜姓图腾是羊和女的组合，代表母系社会中以羊为图腾的氏族。",
+    famousAncestors: ["姜子牙", "姜维", "姜夔", "姜珮瑶"],
+    distribution: "姜姓在北方分布较广，尤以山东为盛。",
+    populationRank: 60,
+    halls: [
+      { name: "天水堂", description: "姜维后代发展而成。", region: "甘肃" },
+      { name: "稼墙堂", description: "纪念神农氏教民稼墙。", region: "各地" }
+    ]
+  },
+  {
+    character: "章",
+    pinyin: "Zhāng",
+    origin: "章氏主要源自姜姓和任姓。齐太公姜尚之后，封于章，以国为氏。又说源于任姓，黄帝赐封。",
+    totemDescription: "章姓图腾是音律的象形，代表善于音乐的氏族。",
+    famousAncestors: ["章邯", "章太炎", "章学诚", "章若楠"],
+    distribution: "章姓主要分布于浙江、江西、安徽三省。",
+    populationRank: 118,
+    halls: [
+      { name: "豫章堂", description: "汉代章平封豫章郡。", region: "江西" }
+    ]
+  },
+  {
+    character: "向",
+    pinyin: "Xiàng",
+    origin: "向氏源出子姓，为宋国公族之后。春秋时期，宋桓公有子名向父，其后代以王父字为氏。",
+    totemDescription: "向姓图腾是窗口向着太阳的方向。",
+    famousAncestors: ["向秀", "向警予", "向涵之"],
+    distribution: "向姓主要分布于湖南、湖北、四川等地。",
+    populationRank: 99,
+    halls: [
+      { name: "河南堂", description: "向氏发源地之一。", region: "河南" },
+      { name: "中和堂", description: "取致中和之意。", region: "各地" }
+    ]
   }
 ];
 
@@ -106,14 +144,16 @@ const COMMON_SURNAMES_LIST = [
 
 export const MOCK_SURNAMES: SurnameData[] = [
   ...DETAILED_SURNAMES,
-  ...COMMON_SURNAMES_LIST.map((item, index) => ({
+  ...COMMON_SURNAMES_LIST
+    .filter(item => !DETAILED_SURNAMES.some(ds => ds.character === item.char)) // Deduplicate
+    .map((item, index) => ({
     character: item.char,
     pinyin: item.pinyin,
     origin: `${item.char}姓是中国著名姓氏之一，历史悠久，源流众多，多以国为氏或以邑为氏。`,
     totemDescription: "暂无详细图腾数据。",
     famousAncestors: [],
     distribution: "分布广泛，遍布全国。",
-    populationRank: index + 6,
+    populationRank: index + 10,
     halls: [{ name: `${item.char}氏宗祠`, description: "传统宗祠", region: "各地" }]
   }))
 ];
