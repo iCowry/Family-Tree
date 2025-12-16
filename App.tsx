@@ -176,6 +176,15 @@ const MemberDetailPage = ({ member, familyMembers, globalMembers, onBack, onEdit
 
     const isLocalMember = familyMembers.some(m => m.id === member.id);
 
+    // Dynamic Logic: Find children where this member is Father OR Mother
+    const dynamicChildren = useMemo(() => {
+        return globalMembers.filter(m => 
+            (m.fatherId === member.id) || 
+            (m.motherId === member.id) ||
+            (member.children && member.children.includes(m.id))
+        ).filter((v,i,a) => a.findIndex(t=>(t.id === v.id))===i); // Deduplicate
+    }, [member.id, member.children, globalMembers]);
+
     return (
         <div className="min-h-screen bg-[#f4f1ea] animate-in slide-in-from-right duration-300">
             <div className="sticky top-0 z-30 bg-[#2c2c2c] text-[#f4f1ea] px-4 py-4 shadow-lg flex justify-between items-center">
@@ -264,15 +273,14 @@ const MemberDetailPage = ({ member, familyMembers, globalMembers, onBack, onEdit
                                 <div className="flex items-start p-3 bg-stone-50 rounded border border-stone-100">
                                     <span className="w-20 font-bold text-[#5d4037] shrink-0 text-sm mt-1">子女:</span>
                                     <div className="flex flex-wrap gap-2">
-                                        {member.children && member.children.length > 0 ? member.children.map(cid => {
-                                            const childMember = globalMembers.find(m => m.id === cid);
+                                        {dynamicChildren.length > 0 ? dynamicChildren.map(child => {
                                             return (
                                                 <button 
-                                                    key={cid} 
-                                                    onClick={() => childMember && onSelect(childMember)}
+                                                    key={child.id} 
+                                                    onClick={() => onSelect(child)}
                                                     className="bg-[#fff5f5] text-[#8b0000] px-3 py-1 rounded text-sm border border-[#8b0000]/20 font-medium shadow-sm hover:bg-[#8b0000] hover:text-white transition-colors"
                                                 >
-                                                    {getName(cid)}
+                                                    {child.surname}{child.givenName}
                                                 </button>
                                             );
                                         }) : <span className="text-stone-400 font-normal italic mt-1">无记录</span>}
@@ -1582,24 +1590,66 @@ const FamilyApp = ({ family, allFamilies, onExit, onUpdateFamily }: { family: Fa
         const existingIndex = updatedMembers.findIndex(m => m.id === member.id);
 
         if (existingIndex >= 0) {
-            // Update
+            // Update existing member
             updatedMembers[existingIndex] = member;
         } else {
-            // Add new
+            // Add new member
             updatedMembers.push(member);
-            // If has father, update father's children list
-            if (member.fatherId) {
-                const fatherIndex = updatedMembers.findIndex(m => m.id === member.fatherId);
-                if (fatherIndex >= 0) {
-                     const father = updatedMembers[fatherIndex];
-                     if (!father.children.includes(member.id)) {
-                         updatedMembers[fatherIndex] = {
-                             ...father,
-                             children: [...father.children, member.id]
-                         };
-                     }
+        }
+
+        // --- 1. Automatic Relationship Sync: Father -> Children ---
+        if (member.fatherId) {
+            const fatherIndex = updatedMembers.findIndex(m => m.id === member.fatherId);
+            if (fatherIndex >= 0) {
+                 const father = updatedMembers[fatherIndex];
+                 if (!father.children.includes(member.id)) {
+                     updatedMembers[fatherIndex] = {
+                         ...father,
+                         children: [...(father.children || []), member.id]
+                     };
+                 }
+            }
+        }
+
+        // --- 2. Automatic Relationship Sync: Mother -> Children (Fix) ---
+        if (member.motherId) {
+            const motherIndex = updatedMembers.findIndex(m => m.id === member.motherId);
+            if (motherIndex >= 0) {
+                const mother = updatedMembers[motherIndex];
+                if (!mother.children?.includes(member.id)) {
+                    updatedMembers[motherIndex] = {
+                        ...mother,
+                        children: [...(mother.children || []), member.id]
+                    };
                 }
             }
+        }
+
+        // --- 3. Automatic Relationship Sync: Spouses -> Partner (Fix) ---
+        // Iterate through all listed spouses of the current member
+        if (member.spouses && member.spouses.length > 0) {
+            member.spouses.forEach(spouseNameOrId => {
+                // Find the spouse entity (search by ID or Name)
+                const spouseIndex = updatedMembers.findIndex(m => 
+                    m.id === spouseNameOrId || 
+                    `${m.surname}${m.givenName}` === spouseNameOrId || 
+                    m.givenName === spouseNameOrId
+                );
+
+                if (spouseIndex >= 0) {
+                    const spouseObj = updatedMembers[spouseIndex];
+                    // Name of the current member to add to the spouse's list
+                    const myName = `${member.surname}${member.givenName}`;
+                    
+                    // If reciprocal link is missing, add it
+                    if (!spouseObj.spouses?.some(s => s === myName || s === member.id)) {
+                         updatedMembers[spouseIndex] = {
+                             ...spouseObj,
+                             spouses: [...(spouseObj.spouses || []), myName] // Defaulting to Name string as per current convention
+                         };
+                    }
+                }
+            });
         }
         
         onUpdateFamily({ ...family, members: updatedMembers });
